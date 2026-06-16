@@ -361,6 +361,30 @@ tr.selected td:nth-child(1),tr.selected td:nth-child(2){background:#eff6ff}
 .bs-actions button{flex:1;padding:12px;border-radius:10px;font-size:14px;font-weight:600;border:none;cursor:pointer}
 .bs-actions .bs-select{background:var(--primary);color:#fff}
 .bs-actions .bs-close{background:#f1f5f9;color:var(--text)}
+
+/* ─── SYNC / SETTINGS ─── */
+.sync-indicator{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--text2);margin-left:auto;cursor:pointer;padding:4px 10px;border-radius:6px;border:1px solid var(--border);background:var(--card);transition:.15s}
+.sync-indicator:hover{border-color:var(--primary);color:var(--primary)}
+.sync-indicator .sync-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.sync-dot.online{background:#16a34a}
+.sync-dot.offline{background:#94a3b8}
+.sync-dot.syncing{background:#f59e0b;animation:pulse-dot .8s infinite}
+.sync-dot.error{background:#dc2626}
+@keyframes pulse-dot{0%,100%{opacity:1}50%{opacity:.3}}
+
+.settings-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:300;justify-content:center;align-items:center}
+.settings-overlay.show{display:flex}
+.settings-modal{background:#fff;border-radius:16px;width:90%;max-width:460px;padding:24px;box-shadow:0 20px 60px rgba(0,0,0,.2)}
+.settings-modal h2{font-size:18px;font-weight:700;margin-bottom:16px;display:flex;align-items:center;gap:8px}
+.settings-modal label{display:block;font-size:13px;font-weight:600;color:var(--text2);margin-bottom:4px}
+.settings-modal input[type="url"],.settings-modal input[type="text"]{width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:14px}
+.settings-modal input:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 2px rgba(37,99,235,.15)}
+.settings-actions{display:flex;gap:10px;margin-top:8px}
+.settings-actions button{flex:1;padding:10px;border-radius:8px;font-size:14px;font-weight:600;border:none;cursor:pointer}
+.settings-actions .btn-save{background:var(--primary);color:#fff}
+.settings-actions .btn-cancel{background:#f1f5f9;color:var(--text)}
+.settings-actions .btn-test{background:#dcfce7;color:var(--green)}
+.sync-status-msg{font-size:12px;padding:8px 12px;border-radius:8px;margin-top:10px;display:none}
 </style>
 </head>
 <body>
@@ -415,6 +439,7 @@ tr.selected td:nth-child(1),tr.selected td:nth-child(2){background:#eff6ff}
       <button class="menu-toggle" id="menuToggle" aria-label="Menu">&#9776;</button>
       <div class="page-title" id="pageTitle">Adjustable Bed</div>
       <div class="topbar-stats" id="topbarStats"></div>
+      <div class="sync-indicator" id="syncBtnTop" title="Sync Settings" style="flex-shrink:0"><span class="sync-dot offline" id="syncDotTop"></span><span id="syncLabelTop">Offline</span></div>
     </div>
 
     <div class="toolbar">
@@ -434,6 +459,7 @@ tr.selected td:nth-child(1),tr.selected td:nth-child(2){background:#eff6ff}
       <span>Inventory Check: <span class="eb-count" id="ebCount">0</span> items checked</span>
       <button class="eb-clear" id="ebClearActual">Clear All Counts</button>
       <button class="eb-btn" id="ebExport">Export Excel</button>
+      <div class="sync-indicator" id="syncBtn" title="Sync Settings"><span class="sync-dot offline" id="syncDot"></span><span id="syncLabel">Offline</span></div>
     </div>
 
     <div class="selection-bar" id="selectionBar">
@@ -446,6 +472,22 @@ tr.selected td:nth-child(1),tr.selected td:nth-child(2){background:#eff6ff}
     </div>
     <div class="table-wrap" id="tableWrap"></div>
     <div class="dashboard" id="dashboard"></div>
+  </div>
+</div>
+
+<!-- Settings Modal -->
+<div class="settings-overlay" id="settingsOverlay">
+  <div class="settings-modal">
+    <h2>&#9881; Sync Settings</h2>
+    <label for="syncUrlInput">Google Apps Script URL</label>
+    <input type="url" id="syncUrlInput" placeholder="https://script.google.com/macros/s/...../exec">
+    <p style="font-size:11px;color:var(--text3);margin:-10px 0 14px">Paste the Web App URL from your Google Apps Script deployment</p>
+    <div class="sync-status-msg" id="syncTestResult"></div>
+    <div class="settings-actions">
+      <button class="btn-cancel" id="settingsCancel">Cancel</button>
+      <button class="btn-test" id="settingsTest">&#128274; Test</button>
+      <button class="btn-save" id="settingsSave">Save</button>
+    </div>
   </div>
 </div>
 
@@ -498,18 +540,35 @@ var selectedParts = new Set();
 var sortCol = 'pn', sortDir = 1;
 var sidebarQuery = '';
 
-// ─── ACTUAL QTY (localStorage) ───
+// ─── ACTUAL QTY (localStorage + Cloud Sync) ───
 var STORAGE_KEY = 'asm_actual_qty_jun2026';
+var SYNC_URL_KEY = 'asm_sync_url';
 var actualQty = {};
+var syncUrl = '';
+var syncState = 'offline'; // offline | syncing | online | error
+var syncDebounceTimer = null;
+
 try { actualQty = JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; } catch(e){}
-function saveActual() {
+try { syncUrl = localStorage.getItem(SYNC_URL_KEY) || ''; } catch(e){}
+
+function saveActualLocal() {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(actualQty)); } catch(e){}
   updateExportBar();
+}
+function saveActual() {
+  saveActualLocal();
+  // Debounce cloud sync — wait 1.5s after last change
+  if (syncUrl) {
+    clearTimeout(syncDebounceTimer);
+    syncDebounceTimer = setTimeout(pushToCloud, 1500);
+  }
 }
 function getActual(idx) { return actualQty[idx] !== undefined ? actualQty[idx] : null; }
 function setActual(idx, val) {
   if (val === null || val === '') { delete actualQty[idx]; }
   else { actualQty[idx] = parseInt(val); }
+  // Update last check date
+  try { localStorage.setItem('asm_last_check_date', new Date().toISOString().slice(0,10)); } catch(e){}
   saveActual();
 }
 function getCheckedCount() { return Object.keys(actualQty).length; }
@@ -518,6 +577,117 @@ function updateExportBar() {
   var cnt = getCheckedCount();
   if (cnt > 0) { bar.style.display = 'flex'; document.getElementById('ebCount').textContent = cnt; }
   else { bar.style.display = 'none'; }
+}
+
+// ─── CLOUD SYNC ───
+function updateSyncUI(state, label) {
+  syncState = state;
+  var dots = document.querySelectorAll('.sync-dot');
+  var labels = [document.getElementById('syncLabel'), document.getElementById('syncLabelTop')];
+  dots.forEach(function(d){ d.className = 'sync-dot ' + state; });
+  labels.forEach(function(l){ if(l) l.textContent = label || state; });
+}
+
+function pushToCloud() {
+  if (!syncUrl) return;
+  var items = [];
+  var keys = Object.keys(actualQty);
+  if (keys.length === 0) return;
+  keys.forEach(function(idx) {
+    var d = DATA[parseInt(idx)];
+    if (d) items.push({ pn: d.pn, qty: actualQty[idx] });
+  });
+  updateSyncUI('syncing', 'Syncing...');
+  fetch(syncUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain' },
+    body: JSON.stringify({ items: items, checkDate: new Date().toISOString().slice(0,10) })
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(res){
+    if (res.error) { updateSyncUI('error', 'Error'); console.error('Sync error:', res.error); }
+    else { updateSyncUI('online', 'Synced'); }
+  })
+  .catch(function(err){ updateSyncUI('error', 'Error'); console.error('Sync failed:', err); });
+}
+
+function pullFromCloud() {
+  if (!syncUrl) { updateSyncUI('offline', 'Offline'); return Promise.resolve(); }
+  updateSyncUI('syncing', 'Loading...');
+  return fetch(syncUrl)
+  .then(function(r){ return r.json(); })
+  .then(function(res){
+    if (res.error) { updateSyncUI('error', 'Error'); return; }
+    if (res.data && Object.keys(res.data).length > 0) {
+      // Map PN-based cloud data back to index-based local storage
+      var cloudData = res.data;
+      Object.keys(cloudData).forEach(function(pn) {
+        if (pnIndex[pn] !== undefined) {
+          actualQty[pnIndex[pn]] = cloudData[pn];
+        }
+      });
+      saveActualLocal();
+      // Update last check date from cloud
+      if (res.lastCheck) {
+        try { localStorage.setItem('asm_last_check_date', res.lastCheck); } catch(e){}
+      }
+    }
+    updateSyncUI('online', 'Synced');
+  })
+  .catch(function(err){
+    updateSyncUI('error', 'Offline');
+    console.error('Pull failed:', err);
+  });
+}
+
+// ─── SETTINGS MODAL ───
+function openSettings() {
+  document.getElementById('syncUrlInput').value = syncUrl;
+  document.getElementById('syncTestResult').style.display = 'none';
+  document.getElementById('settingsOverlay').classList.add('show');
+}
+function closeSettings() {
+  document.getElementById('settingsOverlay').classList.remove('show');
+}
+
+document.getElementById('syncBtn').addEventListener('click', openSettings);
+document.getElementById('syncBtnTop').addEventListener('click', openSettings);
+document.getElementById('settingsCancel').addEventListener('click', closeSettings);
+document.getElementById('settingsOverlay').addEventListener('click', function(e){
+  if(e.target === this) closeSettings();
+});
+
+document.getElementById('settingsTest').addEventListener('click', function(){
+  var url = document.getElementById('syncUrlInput').value.trim();
+  var msg = document.getElementById('syncTestResult');
+  if (!url) { msg.style.display = 'block'; msg.style.background = '#fef2f2'; msg.style.color = '#dc2626'; msg.textContent = 'Please enter a URL first'; return; }
+  msg.style.display = 'block'; msg.style.background = '#eff6ff'; msg.style.color = '#2563eb'; msg.textContent = 'Testing connection...';
+  fetch(url)
+  .then(function(r){ return r.json(); })
+  .then(function(res){
+    if (res.error) { msg.style.background = '#fef2f2'; msg.style.color = '#dc2626'; msg.textContent = 'Error: ' + res.error; }
+    else { msg.style.background = '#dcfce7'; msg.style.color = '#16a34a'; msg.textContent = 'Connected! ' + Object.keys(res.data||{}).length + ' items in cloud.'; }
+  })
+  .catch(function(err){ msg.style.background = '#fef2f2'; msg.style.color = '#dc2626'; msg.textContent = 'Failed: ' + err.message; });
+});
+
+document.getElementById('settingsSave').addEventListener('click', function(){
+  var url = document.getElementById('syncUrlInput').value.trim();
+  syncUrl = url;
+  try { localStorage.setItem(SYNC_URL_KEY, url); } catch(e){}
+  closeSettings();
+  if (url) {
+    pullFromCloud().then(function(){ renderTable(); if(activeGroup === '__dashboard__') renderDashboard(); });
+  } else {
+    updateSyncUI('offline', 'Offline');
+  }
+});
+
+// Initial sync on page load
+if (syncUrl) {
+  pullFromCloud().then(function(){ updateExportBar(); });
+} else {
+  updateSyncUI('offline', 'Offline');
 }
 
 // Progress bar
@@ -1425,9 +1595,13 @@ function reloadApp(newData, month, year) {
   // Update storage key for new month
   STORAGE_KEY = 'asm_actual_qty_' + (titleMonths[month]||month).toLowerCase() + year;
   try { actualQty = JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; } catch(e){ actualQty = {}; }
-  // Re-render
-  renderSidebar();
-  toggleView();
+  // Pull cloud data for new period, then re-render
+  if (syncUrl) {
+    pullFromCloud().then(function(){ renderSidebar(); toggleView(); });
+  } else {
+    renderSidebar();
+    toggleView();
+  }
 }
 
 document.getElementById('excelUpload').addEventListener('change', function(e) {
