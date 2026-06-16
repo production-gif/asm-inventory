@@ -322,7 +322,45 @@ tr.selected td:nth-child(1),tr.selected td:nth-child(2){background:#eff6ff}
   .cont-cell .chip{font-size:10px}
   .selection-bar{padding:8px 12px;font-size:12px;flex-wrap:wrap}
   .selection-bar .sel-actions{margin-left:0;margin-top:4px;width:100%}
+
+  /* Disable sticky columns on mobile */
+  th:nth-child(1),td:nth-child(1),th:nth-child(2),td:nth-child(2){position:static!important;box-shadow:none!important}
+  thead th:nth-child(1),thead th:nth-child(2){z-index:10!important}
 }
+
+/* ─── BOTTOM SHEET (mobile detail popup) ─── */
+.bs-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:200;opacity:0;transition:opacity .25s}
+.bs-overlay.show{display:block;opacity:1}
+.bs-sheet{
+  position:fixed;bottom:0;left:0;right:0;z-index:210;
+  background:#fff;border-radius:16px 16px 0 0;
+  max-height:75vh;overflow-y:auto;
+  transform:translateY(100%);transition:transform .3s cubic-bezier(.4,0,.2,1);
+  box-shadow:0 -8px 30px rgba(0,0,0,.15);
+  -webkit-overflow-scrolling:touch;
+}
+.bs-sheet.show{transform:translateY(0)}
+.bs-handle{width:36px;height:4px;border-radius:2px;background:#d1d5db;margin:10px auto 0}
+.bs-header{padding:16px 20px 12px;border-bottom:1px solid var(--border)}
+.bs-header .bs-pn{font-size:15px;font-weight:700;color:var(--text);word-break:break-word}
+.bs-header .bs-desc{font-size:12px;color:var(--text2);margin-top:2px}
+.bs-header .bs-group{font-size:11px;color:var(--text3);margin-top:2px}
+.bs-body{padding:16px 20px}
+.bs-row{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid #f1f5f9}
+.bs-row:last-child{border-bottom:none}
+.bs-row .bs-label{font-size:13px;color:var(--text2)}
+.bs-row .bs-value{font-size:15px;font-weight:700}
+.bs-row .bs-value.green{color:var(--green)}
+.bs-row .bs-value.orange{color:var(--orange)}
+.bs-row .bs-value.red{color:#dc2626}
+.bs-row .bs-value.blue{color:var(--primary)}
+.bs-containers{margin-top:8px;padding-top:8px;border-top:1px solid var(--border)}
+.bs-containers h4{font-size:12px;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px}
+.bs-cont-item{display:flex;justify-content:space-between;padding:6px 0;font-size:13px;border-bottom:1px solid #f8fafc}
+.bs-actions{padding:12px 20px 24px;display:flex;gap:10px}
+.bs-actions button{flex:1;padding:12px;border-radius:10px;font-size:14px;font-weight:600;border:none;cursor:pointer}
+.bs-actions .bs-select{background:var(--primary);color:#fff}
+.bs-actions .bs-close{background:#f1f5f9;color:var(--text)}
 </style>
 </head>
 <body>
@@ -408,6 +446,22 @@ tr.selected td:nth-child(1),tr.selected td:nth-child(2){background:#eff6ff}
     </div>
     <div class="table-wrap" id="tableWrap"></div>
     <div class="dashboard" id="dashboard"></div>
+  </div>
+</div>
+
+<!-- Bottom Sheet -->
+<div class="bs-overlay" id="bsOverlay"></div>
+<div class="bs-sheet" id="bsSheet">
+  <div class="bs-handle"></div>
+  <div class="bs-header">
+    <div class="bs-pn" id="bsPn"></div>
+    <div class="bs-desc" id="bsDesc"></div>
+    <div class="bs-group" id="bsGroup"></div>
+  </div>
+  <div class="bs-body" id="bsBody"></div>
+  <div class="bs-actions">
+    <button class="bs-select" id="bsToggleSelect">Select</button>
+    <button class="bs-close" id="bsClose">Đóng</button>
   </div>
 </div>
 
@@ -669,7 +723,7 @@ function renderTable() {
     var diffText = diff === null ? '' : (diff > 0 ? '+'+diff.toLocaleString() : diff.toLocaleString());
     if (act !== null) { sumActual += act; hasActualSum = true; }
 
-    html += '<tr class="'+(checked?'selected':'')+(diff!==null&&diff!==0?' style="background:#fff5f5"':'')+'">'+
+    html += '<tr class="'+(checked?'selected':'')+'" data-ridx="'+idx+'"'+(diff!==null&&diff!==0?' style="background:#fff5f5"':'')+'>'+
       '<td class="cb-cell"><input type="checkbox" '+(checked?'checked':'')+' data-idx="'+idx+'"></td>'+
       '<td class="pn-cell">'+esc(r.pn)+(r.ongQty>0?'<span class="badge in">IN</span>':'')+'</td>'+
       '<td class="desc-cell" title="'+esc(r.desc)+'">'+esc(r.desc)+'</td>'+
@@ -702,6 +756,16 @@ function renderTable() {
       else selectedParts.delete(idx);
       renderTable();
       renderSidebar();
+    });
+  });
+
+  // Mobile: tap row to open bottom sheet
+  wrap.querySelectorAll('tr[data-ridx]').forEach(function(row) {
+    row.addEventListener('click', function(e) {
+      // Don't trigger on checkbox or input clicks
+      if(e.target.tagName === 'INPUT') return;
+      var idx = parseInt(row.dataset.ridx);
+      openBottomSheet(idx);
     });
   });
 
@@ -879,6 +943,98 @@ document.addEventListener('touchend', function(e) {
   if (touchStartX < 30 && dx > 60) openSidebar();
   if (document.getElementById('sidebar').classList.contains('open') && dx < -60) closeSidebar();
 }, {passive:true});
+
+// ─── BOTTOM SHEET (mobile detail) ───
+var bsCurrentIdx = null;
+var isMobile = function(){ return window.innerWidth <= 768; };
+
+function openBottomSheet(idx) {
+  if(!isMobile()) return;
+  var r = DATA[idx];
+  if(!r) return;
+  bsCurrentIdx = idx;
+
+  document.getElementById('bsPn').textContent = r.pn;
+  document.getElementById('bsDesc').textContent = r.desc;
+  document.getElementById('bsGroup').textContent = r.group;
+
+  var act = getActual(idx);
+  var diff = act !== null ? act - r.invQty : null;
+
+  var html = '';
+  html += '<div class="bs-row"><span class="bs-label">Tồn kho hệ thống</span><span class="bs-value green">'+r.invQty.toLocaleString()+'</span></div>';
+  html += '<div class="bs-row"><span class="bs-label">Hàng đang về</span><span class="bs-value '+(r.ongQty>0?'orange':'')+'">'+
+    (r.ongQty > 0 ? r.ongQty.toLocaleString() : '—')+'</span></div>';
+  html += '<div class="bs-row"><span class="bs-label">Tổng (Stock + Incoming)</span><span class="bs-value">'+(r.invQty+r.ongQty).toLocaleString()+'</span></div>';
+
+  // Actual qty input
+  html += '<div class="bs-row"><span class="bs-label">Số lượng thực tế</span>'+
+    '<input type="number" class="actual-input '+(act!==null?'filled':'')+'" id="bsActualInput" value="'+(act!==null?act:'')+'" placeholder="Nhập tại đây" min="0" inputmode="numeric" style="width:100px;font-size:15px;padding:8px 10px"></div>';
+
+  if(diff !== null) {
+    var diffSign = diff > 0 ? '+' : '';
+    var diffColor = diff > 0 ? 'green' : (diff < 0 ? 'red' : '');
+    html += '<div class="bs-row"><span class="bs-label">Chênh lệch</span><span class="bs-value '+diffColor+'">'+diffSign+diff.toLocaleString()+'</span></div>';
+  }
+
+  // Containers
+  if(r.containers && r.containers.length > 0) {
+    html += '<div class="bs-containers"><h4>&#128674; Container đang về</h4>';
+    r.containers.forEach(function(c){
+      html += '<div class="bs-cont-item"><span>'+esc(c.cont)+'</span><span><strong>'+c.qty.toLocaleString()+'</strong> — ETA: '+(c.eta||'—')+'</span></div>';
+    });
+    html += '</div>';
+  }
+
+  document.getElementById('bsBody').innerHTML = html;
+
+  // Update select button text
+  var isSelected = selectedParts.has(idx);
+  var selBtn = document.getElementById('bsToggleSelect');
+  selBtn.textContent = isSelected ? '&#10003; Đã chọn' : 'Chọn item này';
+  selBtn.style.background = isSelected ? '#10b981' : 'var(--primary)';
+
+  // Bind actual input inside sheet
+  var bsInp = document.getElementById('bsActualInput');
+  bsInp.addEventListener('change', function(){
+    var val = bsInp.value.trim();
+    setActual(idx, val === '' ? null : val);
+    bsInp.classList.toggle('filled', val !== '');
+    // Refresh the diff display
+    openBottomSheet(idx);
+    // Also update the table row inline if visible
+    renderTable();
+  });
+  bsInp.addEventListener('focus', function(){ bsInp.select(); });
+
+  // Show
+  document.getElementById('bsOverlay').classList.add('show');
+  requestAnimationFrame(function(){
+    document.getElementById('bsSheet').classList.add('show');
+  });
+}
+
+function closeBottomSheet() {
+  document.getElementById('bsSheet').classList.remove('show');
+  setTimeout(function(){
+    document.getElementById('bsOverlay').classList.remove('show');
+  }, 300);
+  bsCurrentIdx = null;
+}
+
+document.getElementById('bsOverlay').addEventListener('click', closeBottomSheet);
+document.getElementById('bsClose').addEventListener('click', closeBottomSheet);
+document.getElementById('bsToggleSelect').addEventListener('click', function(){
+  if(bsCurrentIdx === null) return;
+  if(selectedParts.has(bsCurrentIdx)) {
+    selectedParts.delete(bsCurrentIdx);
+  } else {
+    selectedParts.add(bsCurrentIdx);
+  }
+  openBottomSheet(bsCurrentIdx);
+  renderSidebar();
+  // Don't call renderTable here to avoid closing sheet
+});
 
 // ─── DASHBOARD ───
 var dashCharts = {};
