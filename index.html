@@ -426,6 +426,12 @@ tr.selected td:nth-child(1),tr.selected td:nth-child(2){background:#eff6ff}
         <input type="file" id="excelUpload" accept=".xlsx,.xls" style="display:none">
       </label>
       <div id="uploadStatus" style="display:none;margin-top:8px;padding:8px 12px;border-radius:8px;font-size:12px"></div>
+      <!-- Sync Button in sidebar -->
+      <div id="syncBtnSidebar" style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:10px;background:rgba(255,255,255,.08);cursor:pointer;transition:.15s;margin-top:8px">
+        <span style="font-size:18px">&#9741;</span>
+        <span style="color:var(--sb-text);font-size:13px;font-weight:500">Cloud Sync</span>
+        <span style="margin-left:auto;display:flex;align-items:center;gap:4px"><span class="sync-dot offline" id="syncDotSB"></span><span id="syncLabelSB" style="color:var(--sb-text2);font-size:11px">Offline</span></span>
+      </div>
     </div>
 
     <!-- Footer -->
@@ -583,7 +589,7 @@ function updateExportBar() {
 function updateSyncUI(state, label) {
   syncState = state;
   var dots = document.querySelectorAll('.sync-dot');
-  var labels = [document.getElementById('syncLabel'), document.getElementById('syncLabelTop')];
+  var labels = [document.getElementById('syncLabel'), document.getElementById('syncLabelTop'), document.getElementById('syncLabelSB')];
   dots.forEach(function(d){ d.className = 'sync-dot ' + state; });
   labels.forEach(function(l){ if(l) l.textContent = label || state; });
 }
@@ -652,6 +658,7 @@ function closeSettings() {
 
 document.getElementById('syncBtn').addEventListener('click', openSettings);
 document.getElementById('syncBtnTop').addEventListener('click', openSettings);
+document.getElementById('syncBtnSidebar').addEventListener('click', openSettings);
 document.getElementById('settingsCancel').addEventListener('click', closeSettings);
 document.getElementById('settingsOverlay').addEventListener('click', function(e){
   if(e.target === this) closeSettings();
