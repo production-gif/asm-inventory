@@ -156,7 +156,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 
 /* ─── TABLE ─── */
 .table-wrap{flex:1;overflow:auto;padding:0 24px 80px;-webkit-overflow-scrolling:touch}
-table{width:100%;border-collapse:separate;border-spacing:0;margin-top:12px;background:var(--card);border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,.06);min-width:700px}
+table{width:100%;border-collapse:separate;border-spacing:0;margin-top:12px;background:var(--card);border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,.06);min-width:850px}
 thead th{position:sticky;top:0;z-index:10}
 th{
   background:#f8fafc;padding:10px 12px;text-align:left;font-size:11px;
@@ -192,6 +192,39 @@ tr:last-child td{border-bottom:none}
 .empty-state{text-align:center;padding:60px 20px;color:var(--text2)}
 .empty-state .em-icon{font-size:48px;margin-bottom:12px}
 
+/* ─── ACTUAL QTY INPUT ─── */
+.actual-input{
+  width:70px;padding:5px 6px;border:1px solid var(--border);border-radius:6px;
+  font-size:13px;font-weight:600;text-align:right;background:var(--card);
+  font-variant-numeric:tabular-nums;
+}
+.actual-input:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 2px rgba(37,99,235,.15)}
+.actual-input.filled{border-color:var(--primary);background:#eff6ff}
+.diff-cell{text-align:right;font-weight:700;font-size:13px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.diff-cell.pos{color:var(--green)}
+.diff-cell.neg{color:#dc2626}
+.diff-cell.zero{color:var(--text3)}
+
+/* ─── EXPORT BAR ─── */
+.export-bar{
+  padding:8px 24px;background:#ecfdf5;border-bottom:1px solid #a7f3d0;
+  display:flex;align-items:center;gap:12px;font-size:13px;color:#065f46;flex-shrink:0;
+}
+.export-bar .eb-count{font-weight:700}
+.export-bar .eb-btn{
+  margin-left:auto;padding:7px 16px;border-radius:8px;border:none;
+  background:#059669;color:#fff;cursor:pointer;font-size:13px;font-weight:600;
+}
+.export-bar .eb-btn:hover{background:#047857}
+.export-bar .eb-clear{
+  padding:7px 12px;border-radius:8px;border:1px solid #a7f3d0;
+  background:#fff;color:#065f46;cursor:pointer;font-size:12px;font-weight:600;
+}
+@media(max-width:768px){
+  .actual-input{width:60px;padding:4px 4px;font-size:12px}
+  .export-bar{padding:8px 12px;font-size:12px;flex-wrap:wrap}
+}
+
 /* ─── MOBILE OVERLAY ─── */
 .sidebar-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:140}
 
@@ -214,7 +247,7 @@ tr:last-child td{border-bottom:none}
   .toolbar{padding:10px 12px;gap:8px}
   .toolbar input{min-width:100px}
   .table-wrap{padding:0 8px 80px;overflow:auto;-webkit-overflow-scrolling:touch}
-  table{min-width:650px}
+  table{min-width:750px}
   .topbar{padding:12px}
   td,th{padding:6px 8px;font-size:12px}
   .desc-cell{max-width:140px}
@@ -279,7 +312,15 @@ tr:last-child td{border-bottom:none}
         <option value="incoming">Incoming Only</option>
         <option value="both">Stock &amp; Incoming</option>
         <option value="nostock">Out of Stock</option>
+        <option value="checked">Checked Only</option>
+        <option value="diff">Differences Only</option>
       </select>
+    </div>
+
+    <div class="export-bar" id="exportBar" style="display:none">
+      <span>Inventory Check: <span class="eb-count" id="ebCount">0</span> items checked</span>
+      <button class="eb-clear" id="ebClearActual">Clear All Counts</button>
+      <button class="eb-btn" id="ebExport">Export Excel</button>
     </div>
 
     <div class="selection-bar" id="selectionBar">
@@ -324,6 +365,28 @@ var activeGroup = groups[0] || '';
 var selectedParts = new Set();
 var sortCol = 'pn', sortDir = 1;
 var sidebarQuery = '';
+
+// ─── ACTUAL QTY (localStorage) ───
+var STORAGE_KEY = 'asm_actual_qty_jun2026';
+var actualQty = {};
+try { actualQty = JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; } catch(e){}
+function saveActual() {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(actualQty)); } catch(e){}
+  updateExportBar();
+}
+function getActual(idx) { return actualQty[idx] !== undefined ? actualQty[idx] : null; }
+function setActual(idx, val) {
+  if (val === null || val === '') { delete actualQty[idx]; }
+  else { actualQty[idx] = parseInt(val); }
+  saveActual();
+}
+function getCheckedCount() { return Object.keys(actualQty).length; }
+function updateExportBar() {
+  var bar = document.getElementById('exportBar');
+  var cnt = getCheckedCount();
+  if (cnt > 0) { bar.style.display = 'flex'; document.getElementById('ebCount').textContent = cnt; }
+  else { bar.style.display = 'none'; }
+}
 
 // Progress bar
 var totalInv = DATA.reduce(function(s,r){return s+r.invQty},0);
@@ -414,10 +477,16 @@ function getFilteredData() {
     } else if (activeGroup !== '__all__' && r.group !== activeGroup) return false;
 
     if (q && r.pn.toLowerCase().indexOf(q) === -1 && r.desc.toLowerCase().indexOf(q) === -1) return false;
+    var idx = pnIndex[r.pn];
     if (vf === 'instock' && r.invQty <= 0) return false;
     if (vf === 'incoming' && r.ongQty <= 0) return false;
     if (vf === 'both' && (r.invQty <= 0 || r.ongQty <= 0)) return false;
     if (vf === 'nostock' && r.invQty > 0) return false;
+    if (vf === 'checked' && getActual(idx) === null) return false;
+    if (vf === 'diff') {
+      var a = getActual(idx);
+      if (a === null || a === r.invQty) return false;
+    }
     return true;
   });
 }
@@ -466,27 +535,34 @@ function renderTable() {
     '<th class="'+(sortCol==='pn'?'sorted':'')+'" data-col="pn">Part Number'+si('pn')+'</th>'+
     '<th class="'+(sortCol==='desc'?'sorted':'')+'" data-col="desc">Description'+si('desc')+'</th>'+
     (showGroup ? '<th class="'+(sortCol==='group'?'sorted':'')+'" data-col="group">Group'+si('group')+'</th>' : '')+
-    '<th class="'+(sortCol==='invQty'?'sorted':'')+'" data-col="invQty" style="text-align:right">In Stock'+si('invQty')+'</th>'+
+    '<th class="'+(sortCol==='invQty'?'sorted':'')+'" data-col="invQty" style="text-align:right">System'+si('invQty')+'</th>'+
+    '<th style="text-align:center" class="no-sort">Actual</th>'+
+    '<th style="text-align:right" class="no-sort">Diff</th>'+
     '<th class="'+(sortCol==='ongQty'?'sorted':'')+'" data-col="ongQty" style="text-align:right">Incoming'+si('ongQty')+'</th>'+
-    '<th style="text-align:right" class="no-sort">Total</th>'+
     '<th class="no-sort">Container / ETA</th>'+
     '</tr></thead><tbody>';
 
-  var sumInv = 0, sumOng = 0;
+  var sumInv = 0, sumOng = 0, sumActual = 0, hasActualSum = false;
   filtered.forEach(function(r) {
     sumInv += r.invQty;
     sumOng += r.ongQty;
-    var total = r.invQty + r.ongQty;
     var idx = pnIndex[r.pn];
     var checked = selectedParts.has(idx);
-    html += '<tr class="'+(checked?'selected':'')+'">'+
+    var act = getActual(idx);
+    var diff = act !== null ? act - r.invQty : null;
+    var diffClass = diff === null ? '' : (diff > 0 ? 'pos' : (diff < 0 ? 'neg' : 'zero'));
+    var diffText = diff === null ? '' : (diff > 0 ? '+'+diff.toLocaleString() : diff.toLocaleString());
+    if (act !== null) { sumActual += act; hasActualSum = true; }
+
+    html += '<tr class="'+(checked?'selected':'')+(diff!==null&&diff!==0?' style="background:#fff5f5"':'')+'">'+
       '<td class="cb-cell"><input type="checkbox" '+(checked?'checked':'')+' data-idx="'+idx+'"></td>'+
       '<td class="pn-cell">'+esc(r.pn)+(r.ongQty>0?'<span class="badge in">IN</span>':'')+'</td>'+
       '<td class="desc-cell" title="'+esc(r.desc)+'">'+esc(r.desc)+'</td>'+
       (showGroup ? '<td><span style="font-size:11px;color:var(--text2)">'+esc(r.group)+'</span></td>' : '')+
       '<td class="qty-cell '+(r.invQty>0?'has':'zero')+'">'+r.invQty.toLocaleString()+'</td>'+
+      '<td style="text-align:center"><input type="number" class="actual-input '+(act!==null?'filled':'')+'" data-aidx="'+idx+'" value="'+(act!==null?act:'')+'" placeholder="—" min="0" inputmode="numeric"></td>'+
+      '<td class="diff-cell '+diffClass+'">'+diffText+'</td>'+
       '<td class="qty-cell '+(r.ongQty>0?'ong':'zero')+'">'+(r.ongQty>0?r.ongQty.toLocaleString():'—')+'</td>'+
-      '<td class="qty-cell" style="text-align:right">'+total.toLocaleString()+'</td>'+
       '<td class="cont-cell">'+renderContainers(r.containers)+'</td>'+
       '</tr>';
   });
@@ -495,8 +571,9 @@ function renderTable() {
     '<td></td>'+
     '<td colspan="'+(showGroup?3:2)+'" style="text-align:right">Total ('+filtered.length+' items)</td>'+
     '<td class="qty-cell has">'+sumInv.toLocaleString()+'</td>'+
+    '<td style="text-align:center;font-weight:700">'+(hasActualSum?sumActual.toLocaleString():'')+'</td>'+
+    '<td class="diff-cell '+(hasActualSum?(sumActual-sumInv>0?'pos':(sumActual-sumInv<0?'neg':'zero')):'')+'">'+(hasActualSum?(sumActual-sumInv>0?'+':'')+((sumActual-sumInv).toLocaleString()):'')+'</td>'+
     '<td class="qty-cell ong">'+(sumOng>0?sumOng.toLocaleString():'—')+'</td>'+
-    '<td class="qty-cell" style="text-align:right">'+(sumInv+sumOng).toLocaleString()+'</td>'+
     '<td></td></tr>';
 
   html += '</tbody></table>';
@@ -527,6 +604,32 @@ function renderTable() {
     });
   }
 
+  // Bind actual qty inputs (NO re-render on input — just save & update diff inline)
+  wrap.querySelectorAll('.actual-input').forEach(function(inp) {
+    inp.addEventListener('change', function() {
+      var idx = parseInt(inp.dataset.aidx);
+      var val = inp.value.trim();
+      setActual(idx, val === '' ? null : val);
+      inp.classList.toggle('filled', val !== '');
+      // Update diff cell inline without full re-render
+      var tr = inp.closest('tr');
+      var sysQty = DATA[idx].invQty;
+      var diffCell = tr.querySelector('.diff-cell');
+      if (val === '') {
+        diffCell.textContent = '';
+        diffCell.className = 'diff-cell';
+        tr.style.background = '';
+      } else {
+        var d = parseInt(val) - sysQty;
+        diffCell.textContent = d > 0 ? '+'+d.toLocaleString() : d.toLocaleString();
+        diffCell.className = 'diff-cell ' + (d > 0 ? 'pos' : (d < 0 ? 'neg' : 'zero'));
+        tr.style.background = d !== 0 ? '#fff5f5' : '';
+      }
+    });
+    // Select all text on focus for easy overwrite
+    inp.addEventListener('focus', function() { inp.select(); });
+  });
+
   // Sort headers
   wrap.querySelectorAll('th[data-col]').forEach(function(th) {
     th.addEventListener('click', function() {
@@ -539,6 +642,7 @@ function renderTable() {
 
   updateSelectionBar();
   updatePageTitle();
+  updateExportBar();
 }
 
 function updateSelectionBar() {
@@ -600,6 +704,55 @@ document.getElementById('selView').addEventListener('click', function() {
   document.getElementById('partSearch').value = '';
   document.getElementById('viewFilter').value = 'all';
   renderSidebar();
+  renderTable();
+});
+
+// ─── EXPORT EXCEL ───
+function exportExcel() {
+  var rows = [];
+  // Header
+  rows.push(['Part Number','Description','Group','System Qty','Actual Qty','Difference','Checked By','Date']);
+  var now = new Date().toLocaleDateString('vi-VN');
+  // Only items that have been checked
+  Object.keys(actualQty).forEach(function(idxStr) {
+    var idx = parseInt(idxStr);
+    var r = DATA[idx];
+    if (!r) return;
+    var act = actualQty[idxStr];
+    var diff = act - r.invQty;
+    rows.push([r.pn, r.desc, r.group, r.invQty, act, diff, '', now]);
+  });
+
+  if (rows.length <= 1) { alert('No items checked yet.'); return; }
+
+  // Build CSV with BOM for Excel UTF-8
+  var csv = '﻿';
+  rows.forEach(function(row) {
+    csv += row.map(function(cell) {
+      var s = String(cell === null || cell === undefined ? '' : cell);
+      if (s.indexOf(',') > -1 || s.indexOf('"') > -1 || s.indexOf('\n') > -1) {
+        return '"' + s.replace(/"/g, '""') + '"';
+      }
+      return s;
+    }).join(',') + '\n';
+  });
+
+  var blob = new Blob([csv], {type: 'text/csv;charset=utf-8;'});
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = 'inventory-check-' + new Date().toISOString().slice(0,10) + '.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+document.getElementById('ebExport').addEventListener('click', exportExcel);
+document.getElementById('ebClearActual').addEventListener('click', function() {
+  if (!confirm('Clear all actual counts? This cannot be undone.')) return;
+  actualQty = {};
+  saveActual();
   renderTable();
 });
 
