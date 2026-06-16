@@ -1177,8 +1177,22 @@ document.getElementById('ebExport').addEventListener('click', exportExcel);
 document.getElementById('ebClearActual').addEventListener('click', function() {
   if (!confirm('Clear all actual counts? This cannot be undone.')) return;
   actualQty = {};
-  saveActual();
+  saveActualLocal();
+  try { localStorage.removeItem('asm_last_check_date'); } catch(e){}
+  // Also clear cloud data
+  if (syncUrl) {
+    updateSyncUI('syncing', 'Clearing...');
+    fetch(syncUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ type: 'clearActual' })
+    })
+    .then(function(r){ return r.json(); })
+    .then(function(res){ updateSyncUI('online', 'Synced'); })
+    .catch(function(err){ updateSyncUI('error', 'Error'); });
+  }
   renderTable();
+  if(activeGroup === '__dashboard__') renderDashboard();
 });
 
 // Swipe gestures
