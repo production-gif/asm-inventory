@@ -891,7 +891,12 @@ function getFilteredData() {
       if (!selectedParts.has(pnIndex[r.pn])) return false;
     } else if (activeGroup !== '__all__' && r.group !== activeGroup) return false;
 
-    if (q && r.pn.toLowerCase().indexOf(q) === -1 && r.desc.toLowerCase().indexOf(q) === -1) return false;
+    if (q) {
+      var combined = (r.pn + ' ' + r.desc).toLowerCase();
+      var words = q.split(/\s+/);
+      var allMatch = words.every(function(w){ return w === '' || combined.indexOf(w) !== -1; });
+      if (!allMatch) return false;
+    }
     var idx = pnIndex[r.pn];
     if (vf === 'instock' && r.invQty <= 0) return false;
     if (vf === 'incoming' && r.ongQty <= 0) return false;
