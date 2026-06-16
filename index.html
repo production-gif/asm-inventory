@@ -690,9 +690,78 @@ document.getElementById('settingsSave').addEventListener('click', function(){
   }
 });
 
+// ─── FULL DATA SYNC ───
+function pushFullDataToCloud(month, year) {
+  if (!syncUrl) return;
+  var dataJson = JSON.stringify(DATA);
+  updateSyncUI('syncing', 'Uploading...');
+  fetch(syncUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain' },
+    body: JSON.stringify({ type: 'data', dataJson: dataJson, month: month, year: year })
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(res){
+    if (res.error) { updateSyncUI('error', 'Error'); console.error('Data push error:', res.error); }
+    else {
+      updateSyncUI('online', 'Synced');
+      // Save timestamp locally
+      try { localStorage.setItem('asm_data_cloud_ts', res.updatedAt || new Date().toISOString()); } catch(e){}
+    }
+  })
+  .catch(function(err){ updateSyncUI('error', 'Error'); console.error('Data push failed:', err); });
+}
+
+function pullFullDataFromCloud() {
+  if (!syncUrl) return Promise.resolve(false);
+  updateSyncUI('syncing', 'Loading...');
+  return fetch(syncUrl + '?type=data')
+  .then(function(r){ return r.json(); })
+  .then(function(res){
+    if (res.error || !res.dataJson) {
+      // No cloud data yet, that's ok
+      return false;
+    }
+    // Check if cloud data is newer than local
+    var localTs = null;
+    try { localTs = localStorage.getItem('asm_data_cloud_ts'); } catch(e){}
+    var cloudTs = res.updatedAt;
+
+    if (cloudTs && (!localTs || cloudTs > localTs)) {
+      // Cloud is newer — apply it
+      var cloudData = JSON.parse(res.dataJson);
+      if (cloudData && cloudData.length > 0) {
+        var m = res.month;
+        var y = res.year;
+        // Store timestamp
+        try { localStorage.setItem('asm_data_cloud_ts', cloudTs); } catch(e){}
+        // Store data locally for offline use
+        try { localStorage.setItem('asm_cloud_data_cache', res.dataJson); localStorage.setItem('asm_cloud_data_meta', JSON.stringify({month:m,year:y})); } catch(e){}
+        return { data: cloudData, month: m, year: y };
+      }
+    }
+    return false;
+  })
+  .catch(function(err){
+    console.error('Data pull failed:', err);
+    return false;
+  });
+}
+
 // Initial sync on page load
 if (syncUrl) {
-  pullFromCloud().then(function(){ updateExportBar(); });
+  pullFullDataFromCloud().then(function(result){
+    if (result && result.data) {
+      // Cloud has newer inventory data — reload app with it
+      reloadApp(result.data, result.month, result.year);
+    }
+    // Then pull actual qty
+    return pullFromCloud();
+  }).then(function(){
+    updateExportBar();
+    renderTable();
+    if(activeGroup === '__dashboard__') renderDashboard();
+  }).catch(function(){ updateSyncUI('error', 'Offline'); });
 } else {
   updateSyncUI('offline', 'Offline');
 }
@@ -1488,9 +1557,9 @@ function parseExcelData(wb) {
     if (pn) partGroupMap[String(pn).trim()] = grp ? String(grp).trim() : 'Ungrouped';
   }
 
-  // 2. Parse "Inventory Data" — find latest month/year, aggregate qty by PartNumber
-  var invSheet = wb.Sheets['Inventory Data'];
-  if (!invSheet) throw 'Sheet "Inventory Data" not found';
+  // 2. Parse "Inv input" — find latest month/year, aggregate qty by PartNumber
+  var invSheet = wb.Sheets['Inv input'];
+  if (!invSheet) throw 'Sheet "Inv input" not found';
   var invRows = XLSX.utils.sheet_to_json(invSheet, {header:1});
   // Find max month/year
   var maxYear = 0, maxMonth = 0;
@@ -1602,8 +1671,9 @@ function reloadApp(newData, month, year) {
   // Update storage key for new month
   STORAGE_KEY = 'asm_actual_qty_' + (titleMonths[month]||month).toLowerCase() + year;
   try { actualQty = JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; } catch(e){ actualQty = {}; }
-  // Pull cloud data for new period, then re-render
+  // Push full data to cloud + pull actual qty, then re-render
   if (syncUrl) {
+    pushFullDataToCloud(month, year);
     pullFromCloud().then(function(){ renderSidebar(); toggleView(); });
   } else {
     renderSidebar();
