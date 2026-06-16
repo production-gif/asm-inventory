@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="vi">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
@@ -461,7 +461,7 @@ tr.selected td:nth-child(1),tr.selected td:nth-child(2){background:#eff6ff}
   <div class="bs-body" id="bsBody"></div>
   <div class="bs-actions">
     <button class="bs-select" id="bsToggleSelect">Select</button>
-    <button class="bs-close" id="bsClose">Đóng</button>
+    <button class="bs-close" id="bsClose">Close</button>
   </div>
 </div>
 
@@ -891,7 +891,7 @@ function exportExcel() {
   var rows = [];
   // Header
   rows.push(['Part Number','Description','Group','System Qty','Actual Qty','Difference','Checked By','Date']);
-  var now = new Date().toLocaleDateString('vi-VN');
+  var now = new Date().toLocaleDateString('en-US');
   // Only items that have been checked
   Object.keys(actualQty).forEach(function(idxStr) {
     var idx = parseInt(idxStr);
@@ -962,24 +962,24 @@ function openBottomSheet(idx) {
   var diff = act !== null ? act - r.invQty : null;
 
   var html = '';
-  html += '<div class="bs-row"><span class="bs-label">Tồn kho hệ thống</span><span class="bs-value green">'+r.invQty.toLocaleString()+'</span></div>';
-  html += '<div class="bs-row"><span class="bs-label">Hàng đang về</span><span class="bs-value '+(r.ongQty>0?'orange':'')+'">'+
+  html += '<div class="bs-row"><span class="bs-label">System Stock</span><span class="bs-value green">'+r.invQty.toLocaleString()+'</span></div>';
+  html += '<div class="bs-row"><span class="bs-label">Incoming</span><span class="bs-value '+(r.ongQty>0?'orange':'')+'">'+
     (r.ongQty > 0 ? r.ongQty.toLocaleString() : '—')+'</span></div>';
-  html += '<div class="bs-row"><span class="bs-label">Tổng (Stock + Incoming)</span><span class="bs-value">'+(r.invQty+r.ongQty).toLocaleString()+'</span></div>';
+  html += '<div class="bs-row"><span class="bs-label">Total (Stock + Incoming)</span><span class="bs-value">'+(r.invQty+r.ongQty).toLocaleString()+'</span></div>';
 
   // Actual qty input
-  html += '<div class="bs-row"><span class="bs-label">Số lượng thực tế</span>'+
-    '<input type="number" class="actual-input '+(act!==null?'filled':'')+'" id="bsActualInput" value="'+(act!==null?act:'')+'" placeholder="Nhập tại đây" min="0" inputmode="numeric" style="width:100px;font-size:15px;padding:8px 10px"></div>';
+  html += '<div class="bs-row"><span class="bs-label">Actual Quantity</span>'+
+    '<input type="number" class="actual-input '+(act!==null?'filled':'')+'" id="bsActualInput" value="'+(act!==null?act:'')+'" placeholder="Enter here" min="0" inputmode="numeric" style="width:100px;font-size:15px;padding:8px 10px"></div>';
 
   if(diff !== null) {
     var diffSign = diff > 0 ? '+' : '';
     var diffColor = diff > 0 ? 'green' : (diff < 0 ? 'red' : '');
-    html += '<div class="bs-row"><span class="bs-label">Chênh lệch</span><span class="bs-value '+diffColor+'">'+diffSign+diff.toLocaleString()+'</span></div>';
+    html += '<div class="bs-row"><span class="bs-label">Difference</span><span class="bs-value '+diffColor+'">'+diffSign+diff.toLocaleString()+'</span></div>';
   }
 
   // Containers
   if(r.containers && r.containers.length > 0) {
-    html += '<div class="bs-containers"><h4>&#128674; Container đang về</h4>';
+    html += '<div class="bs-containers"><h4>&#128674; Incoming Containers</h4>';
     r.containers.forEach(function(c){
       html += '<div class="bs-cont-item"><span>'+esc(c.cont)+'</span><span><strong>'+c.qty.toLocaleString()+'</strong> — ETA: '+(c.eta||'—')+'</span></div>';
     });
@@ -991,7 +991,7 @@ function openBottomSheet(idx) {
   // Update select button text
   var isSelected = selectedParts.has(idx);
   var selBtn = document.getElementById('bsToggleSelect');
-  selBtn.textContent = isSelected ? '&#10003; Đã chọn' : 'Chọn item này';
+  selBtn.textContent = isSelected ? '&#10003; Selected' : 'Select this item';
   selBtn.style.background = isSelected ? '#10b981' : 'var(--primary)';
 
   // Bind actual input inside sheet
@@ -1096,29 +1096,29 @@ function renderDashboard() {
     if(!lastCheckTs) { lastCheckTs = nowIso; try{localStorage.setItem(LAST_CHECK_KEY, nowIso);}catch(e){} }
   }
   var daysSinceCheck = lastCheckTs ? Math.floor((today - new Date(lastCheckTs))/(1000*60*60*24)) : null;
-  var lastCheckDisplay = lastCheckTs ? new Date(lastCheckTs).toLocaleDateString('vi-VN') : '—';
+  var lastCheckDisplay = lastCheckTs ? new Date(lastCheckTs).toLocaleDateString('en-US') : '—';
 
   var html = '';
 
   // ── Summary Row ──
   html += '<div class="db-summary">';
-  html += '<div class="db-card green"><div class="dc-icon">&#128230;</div><div class="dc-val">'+totalInvQty.toLocaleString()+'</div><div class="dc-label">Tồn kho hệ thống</div></div>';
-  html += '<div class="db-card orange"><div class="dc-icon">&#128674;</div><div class="dc-val">'+totalOngQty.toLocaleString()+'</div><div class="dc-label">Hàng đang về</div></div>';
-  html += '<div class="db-card blue"><div class="dc-icon">&#9745;</div><div class="dc-val">'+checkedCount+' / '+totalSKU+'</div><div class="dc-label">Đã kiểm tra</div></div>';
-  html += '<div class="db-card '+(discCount>0?'red':'green')+'"><div class="dc-icon">&#9888;</div><div class="dc-val">'+discCount+'</div><div class="dc-label">Lệch tồn kho</div></div>';
+  html += '<div class="db-card green"><div class="dc-icon">&#128230;</div><div class="dc-val">'+totalInvQty.toLocaleString()+'</div><div class="dc-label">System Stock</div></div>';
+  html += '<div class="db-card orange"><div class="dc-icon">&#128674;</div><div class="dc-val">'+totalOngQty.toLocaleString()+'</div><div class="dc-label">Incoming Shipments</div></div>';
+  html += '<div class="db-card blue"><div class="dc-icon">&#9745;</div><div class="dc-val">'+checkedCount+' / '+totalSKU+'</div><div class="dc-label">Items Checked</div></div>';
+  html += '<div class="db-card '+(discCount>0?'red':'green')+'"><div class="dc-icon">&#9888;</div><div class="dc-val">'+discCount+'</div><div class="dc-label">Discrepancies</div></div>';
   html += '</div>';
 
   // ── Charts Row (3 charts, no status pie) ──
   html += '<div class="db-charts">';
-  html += '<div class="db-chart-card"><h3>Tồn kho theo nhóm (Top 10)</h3><canvas id="chartStockByGroup"></canvas></div>';
-  html += '<div class="db-chart-card"><h3>Hàng đang về theo nhóm</h3><canvas id="chartIncomingByGroup"></canvas></div>';
-  html += '<div class="db-chart-card" style="grid-column:span 2"><h3>Tiến độ kiểm kê theo nhóm</h3><canvas id="chartCheckProgress"></canvas></div>';
+  html += '<div class="db-chart-card"><h3>Stock by Group (Top 10)</h3><canvas id="chartStockByGroup"></canvas></div>';
+  html += '<div class="db-chart-card"><h3>Incoming by Group</h3><canvas id="chartIncomingByGroup"></canvas></div>';
+  html += '<div class="db-chart-card" style="grid-column:span 2"><h3>Check Progress by Group</h3><canvas id="chartCheckProgress"></canvas></div>';
   html += '</div>';
 
   // ── Container Arrival Timeline (collapsible) ──
-  html += '<div class="db-section"><h3><span class="icon">&#128674;</span> Lịch Container Đang Về <span style="font-weight:400;font-size:12px;color:var(--text2)">('+contList.length+' cont, Status: Entered)</span></h3>';
+  html += '<div class="db-section"><h3><span class="icon">&#128674;</span> Container Arrival Schedule <span style="font-weight:400;font-size:12px;color:var(--text2)">('+contList.length+' cont, Status: Entered)</span></h3>';
   if(contList.length === 0) {
-    html += '<div style="text-align:center;padding:20px;color:var(--text2)">Không có container nào đang về</div>';
+    html += '<div style="text-align:center;padding:20px;color:var(--text2)">No incoming containers</div>';
   } else {
     monthKeys.forEach(function(mk){
       var monthLabel = mk;
@@ -1135,7 +1135,7 @@ function renderDashboard() {
         var uid = 'cont_'+mk.replace('-','')+'_'+ci;
         var daysUntil = c.eta ? Math.ceil((new Date(c.eta) - today)/(1000*60*60*24)) : null;
         var daysClass = daysUntil === null ? '' : (daysUntil <= 0 ? 'arrived' : (daysUntil <= 7 ? 'soon' : 'coming'));
-        var daysText = daysUntil === null ? '' : (daysUntil <= 0 ? 'Đã đến' : daysUntil + ' ngày nữa');
+        var daysText = daysUntil === null ? '' : (daysUntil <= 0 ? 'Arrived' : daysUntil + ' days left');
 
         // Collapsed header row
         html += '<div class="ct-collapse-header" data-target="'+uid+'" style="display:flex;align-items:center;gap:12px;padding:10px 12px;border-bottom:1px solid #f1f5f9;cursor:pointer;transition:background .15s"'+
@@ -1170,15 +1170,15 @@ function renderDashboard() {
   html += '</div>';
 
   // ── Inventory Check Detail Table ──
-  html += '<div class="db-section"><h3><span class="icon">&#128203;</span> Chi Tiết Kiểm Kê Tồn Kho';
+  html += '<div class="db-section"><h3><span class="icon">&#128203;</span> Inventory Check Details';
   if(daysSinceCheck !== null) {
-    html += ' <span style="font-size:11px;font-weight:400;color:var(--text2);margin-left:8px">(Kiểm tra gần nhất: '+lastCheckDisplay+' — '+daysSinceCheck+' ngày trước)</span>';
+    html += ' <span style="font-size:11px;font-weight:400;color:var(--text2);margin-left:8px">(Last checked: '+lastCheckDisplay+' — '+daysSinceCheck+' days ago)</span>';
   }
   html += '</h3>';
   if(checkedItems.length === 0) {
     html += '<div style="text-align:center;padding:30px 20px;color:var(--text2)">'+
       '<div style="font-size:36px;margin-bottom:8px">&#128203;</div>'+
-      '<p>Chưa có dữ liệu kiểm kê.</p><p style="font-size:12px">Hãy vào từng nhóm sản phẩm và nhập số lượng thực tế vào cột "Actual" để bắt đầu.</p>'+
+      '<p>No inventory check data yet.</p><p style="font-size:12px">Go to each product group and enter actual quantities in the "Actual" column to begin.</p>'+
       '</div>';
   } else {
     // Sort: differences first (by abs diff desc), then matching items
@@ -1192,10 +1192,10 @@ function renderDashboard() {
     html += '<th style="font-size:10px;padding:8px 10px">Part Number</th>';
     html += '<th style="font-size:10px;padding:8px 10px">Description</th>';
     html += '<th style="font-size:10px;padding:8px 10px">Group</th>';
-    html += '<th style="font-size:10px;padding:8px 10px;text-align:right">Hệ thống</th>';
-    html += '<th style="font-size:10px;padding:8px 10px;text-align:right">Thực tế</th>';
-    html += '<th style="font-size:10px;padding:8px 10px;text-align:right">Chênh lệch</th>';
-    html += '<th style="font-size:10px;padding:8px 10px;text-align:center">Ngày kiểm</th>';
+    html += '<th style="font-size:10px;padding:8px 10px;text-align:right">System</th>';
+    html += '<th style="font-size:10px;padding:8px 10px;text-align:right">Actual</th>';
+    html += '<th style="font-size:10px;padding:8px 10px;text-align:right">Difference</th>';
+    html += '<th style="font-size:10px;padding:8px 10px;text-align:center">Check Date</th>';
     html += '</tr></thead><tbody>';
     checkedItems.forEach(function(d){
       var diffSign = d.diff > 0 ? '+' : '';
@@ -1215,7 +1215,7 @@ function renderDashboard() {
     var sumSys = checkedItems.reduce(function(s,d){return s+d.sys},0);
     var sumAct = checkedItems.reduce(function(s,d){return s+d.act},0);
     var sumDiff = sumAct - sumSys;
-    html += '<tr class="total-row"><td colspan="3" style="text-align:right;padding:8px 10px">Tổng ('+checkedItems.length+' items)</td>';
+    html += '<tr class="total-row"><td colspan="3" style="text-align:right;padding:8px 10px">Total ('+checkedItems.length+' items)</td>';
     html += '<td style="padding:8px 10px;font-weight:700;text-align:right">'+sumSys.toLocaleString()+'</td>';
     html += '<td style="padding:8px 10px;font-weight:700;text-align:right;color:var(--primary)">'+sumAct.toLocaleString()+'</td>';
     html += '<td class="diff-cell '+(sumDiff>0?'pos':(sumDiff<0?'neg':'zero'))+'" style="padding:8px 10px">'+(sumDiff>0?'+':'')+sumDiff.toLocaleString()+'</td>';
@@ -1281,8 +1281,8 @@ function renderDashboard() {
     data:{
       labels:cpGroups,
       datasets:[
-        {label:'Đã kiểm',data:cpGroups.map(function(g){return gpChecked[g]||0}),backgroundColor:'#10b981',borderRadius:4},
-        {label:'Chưa kiểm',data:cpGroups.map(function(g){return (gpTotal[g]||0)-(gpChecked[g]||0)}),backgroundColor:'#e2e8f0',borderRadius:4}
+        {label:'Checked',data:cpGroups.map(function(g){return gpChecked[g]||0}),backgroundColor:'#10b981',borderRadius:4},
+        {label:'Unchecked',data:cpGroups.map(function(g){return (gpTotal[g]||0)-(gpChecked[g]||0)}),backgroundColor:'#e2e8f0',borderRadius:4}
       ]
     },
     options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{font:{size:11}}}},scales:{x:{stacked:true},y:{stacked:true}}}
