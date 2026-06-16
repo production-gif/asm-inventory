@@ -284,9 +284,9 @@ tr.selected td:nth-child(1),tr.selected td:nth-child(2){background:#eff6ff}
 @media(max-width:768px){
   .db-summary{grid-template-columns:repeat(2,1fr);gap:10px}
   .db-charts{grid-template-columns:1fr}
+  .db-chart-card[style*="grid-column"]{grid-column:span 1!important}
   .dashboard{padding:12px 12px 80px}
-  .ct-row{flex-wrap:wrap;gap:6px}
-  .ct-pn{min-width:100%;order:3;font-size:12px}
+  .ct-collapse-header{flex-wrap:wrap;gap:6px!important;font-size:12px}
   .disc-row{flex-wrap:wrap;gap:4px}
 }
 
@@ -891,52 +891,56 @@ function renderDashboard() {
   destroyDashCharts();
   var el = document.getElementById('dashboard');
   var today = new Date();
-  var todayStr = today.toISOString().slice(0,10);
 
-  // ── Summary cards ──
+  // ── Gather data ──
   var totalSKU = DATA.length;
-  var inStockSKU = DATA.filter(function(r){return r.invQty>0}).length;
   var totalInvQty = DATA.reduce(function(s,r){return s+r.invQty},0);
   var totalOngQty = DATA.reduce(function(s,r){return s+r.ongQty},0);
   var checkedCount = getCheckedCount();
-  var discItems = [];
+
+  // All checked items (for the detail table)
+  var checkedItems = [];
   Object.keys(actualQty).forEach(function(idxStr){
     var idx = parseInt(idxStr);
     var r = DATA[idx];
     if(!r) return;
     var diff = actualQty[idxStr] - r.invQty;
-    if(diff !== 0) discItems.push({idx:idx, pn:r.pn, desc:r.desc, group:r.group, sys:r.invQty, act:actualQty[idxStr], diff:diff});
+    checkedItems.push({idx:idx, pn:r.pn, desc:r.desc, group:r.group, sys:r.invQty, act:actualQty[idxStr], diff:diff});
   });
+  var discCount = checkedItems.filter(function(d){return d.diff!==0}).length;
 
-  // Collect all containers with ETA
-  var allConts = [];
+  // Collect containers — group by container name for collapsible view
+  var contMap = {}; // cont -> {eta, items:[{pn,desc,qty}], totalQty}
   DATA.forEach(function(r){
     if(!r.containers) return;
     r.containers.forEach(function(c){
-      allConts.push({pn:r.pn, desc:r.desc, group:r.group, cont:c.cont, qty:c.qty, eta:c.eta||''});
+      var key = c.cont;
+      if(!contMap[key]) contMap[key] = {cont:c.cont, eta:c.eta||'', items:[], totalQty:0};
+      contMap[key].items.push({pn:r.pn, desc:r.desc, qty:c.qty, group:r.group});
+      contMap[key].totalQty += c.qty;
     });
   });
-  allConts.sort(function(a,b){ return (a.eta||'9999').localeCompare(b.eta||'9999'); });
+  var contList = Object.values(contMap).sort(function(a,b){ return (a.eta||'9999').localeCompare(b.eta||'9999'); });
 
-  // Group containers by month
+  // Group containers by month for display
   var contByMonth = {};
-  allConts.forEach(function(c){
+  contList.forEach(function(c){
     var key = c.eta ? c.eta.slice(0,7) : 'Unknown';
     if(!contByMonth[key]) contByMonth[key] = [];
     contByMonth[key].push(c);
   });
   var monthKeys = Object.keys(contByMonth).sort();
 
-  // ── Last check date ──
+  // Last check date
   var LAST_CHECK_KEY = 'asm_last_check_date';
   var lastCheckTs = null;
   try { lastCheckTs = localStorage.getItem(LAST_CHECK_KEY); } catch(e){}
-  // Update last check if there are checked items
   if(checkedCount > 0) {
     var nowIso = today.toISOString().slice(0,10);
     if(!lastCheckTs) { lastCheckTs = nowIso; try{localStorage.setItem(LAST_CHECK_KEY, nowIso);}catch(e){} }
   }
   var daysSinceCheck = lastCheckTs ? Math.floor((today - new Date(lastCheckTs))/(1000*60*60*24)) : null;
+  var lastCheckDisplay = lastCheckTs ? new Date(lastCheckTs).toLocaleDateString('vi-VN') : '—';
 
   var html = '';
 
@@ -945,89 +949,144 @@ function renderDashboard() {
   html += '<div class="db-card green"><div class="dc-icon">&#128230;</div><div class="dc-val">'+totalInvQty.toLocaleString()+'</div><div class="dc-label">Tồn kho hệ thống</div></div>';
   html += '<div class="db-card orange"><div class="dc-icon">&#128674;</div><div class="dc-val">'+totalOngQty.toLocaleString()+'</div><div class="dc-label">Hàng đang về</div></div>';
   html += '<div class="db-card blue"><div class="dc-icon">&#9745;</div><div class="dc-val">'+checkedCount+' / '+totalSKU+'</div><div class="dc-label">Đã kiểm tra</div></div>';
-  html += '<div class="db-card '+(discItems.length>0?'red':'green')+'"><div class="dc-icon">&#9888;</div><div class="dc-val">'+discItems.length+'</div><div class="dc-label">Lệch tồn kho</div></div>';
+  html += '<div class="db-card '+(discCount>0?'red':'green')+'"><div class="dc-icon">&#9888;</div><div class="dc-val">'+discCount+'</div><div class="dc-label">Lệch tồn kho</div></div>';
   html += '</div>';
 
-  // ── Charts Row ──
+  // ── Charts Row (3 charts, no status pie) ──
   html += '<div class="db-charts">';
-  // Chart 1: Top 10 groups by stock
   html += '<div class="db-chart-card"><h3>Tồn kho theo nhóm (Top 10)</h3><canvas id="chartStockByGroup"></canvas></div>';
-  // Chart 2: Incoming by group
   html += '<div class="db-chart-card"><h3>Hàng đang về theo nhóm</h3><canvas id="chartIncomingByGroup"></canvas></div>';
-  // Chart 3: Stock status pie
-  html += '<div class="db-chart-card"><h3>Phân bổ trạng thái SKU</h3><canvas id="chartStatusPie"></canvas></div>';
-  // Chart 4: Inventory check coverage
-  html += '<div class="db-chart-card"><h3>Tiến độ kiểm kê theo nhóm</h3><canvas id="chartCheckProgress"></canvas></div>';
+  html += '<div class="db-chart-card" style="grid-column:span 2"><h3>Tiến độ kiểm kê theo nhóm</h3><canvas id="chartCheckProgress"></canvas></div>';
   html += '</div>';
 
-  // ── Container Arrival Timeline ──
-  html += '<div class="db-section"><h3><span class="icon">&#128674;</span> Lịch Container Đang Về ('+allConts.length+' lô)</h3>';
-  if(allConts.length === 0) {
+  // ── Container Arrival Timeline (collapsible) ──
+  html += '<div class="db-section"><h3><span class="icon">&#128674;</span> Lịch Container Đang Về <span style="font-weight:400;font-size:12px;color:var(--text2)">('+contList.length+' cont, Status: Entered)</span></h3>';
+  if(contList.length === 0) {
     html += '<div style="text-align:center;padding:20px;color:var(--text2)">Không có container nào đang về</div>';
   } else {
     monthKeys.forEach(function(mk){
       var monthLabel = mk;
       if(mk !== 'Unknown') {
-        var parts = mk.split('-');
+        var pts = mk.split('-');
         var mNames = ['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-        monthLabel = mNames[parseInt(parts[1])] + ' ' + parts[0];
+        monthLabel = mNames[parseInt(pts[1])] + ' ' + pts[0];
       }
-      var conts = contByMonth[mk];
-      var monthQty = conts.reduce(function(s,c){return s+c.qty},0);
-      html += '<div class="ct-month"><div class="ct-month-label">'+esc(monthLabel)+' — '+conts.length+' lô, '+monthQty.toLocaleString()+' pcs</div>';
-      conts.forEach(function(c){
+      var mConts = contByMonth[mk];
+      var mQty = mConts.reduce(function(s,c){return s+c.totalQty},0);
+      html += '<div class="ct-month"><div class="ct-month-label">'+esc(monthLabel)+' — '+mConts.length+' cont, '+mQty.toLocaleString()+' pcs</div>';
+
+      mConts.forEach(function(c, ci){
+        var uid = 'cont_'+mk.replace('-','')+'_'+ci;
         var daysUntil = c.eta ? Math.ceil((new Date(c.eta) - today)/(1000*60*60*24)) : null;
         var daysClass = daysUntil === null ? '' : (daysUntil <= 0 ? 'arrived' : (daysUntil <= 7 ? 'soon' : 'coming'));
         var daysText = daysUntil === null ? '' : (daysUntil <= 0 ? 'Đã đến' : daysUntil + ' ngày nữa');
-        html += '<div class="ct-row">'+
-          '<div class="ct-date">'+(c.eta ? c.eta.slice(5) : '—')+'</div>'+
-          '<div class="ct-cont">'+esc(c.cont)+'</div>'+
-          '<div class="ct-pn" title="'+esc(c.pn)+'">'+esc(c.pn)+'</div>'+
-          '<div class="ct-qty">'+c.qty.toLocaleString()+'</div>'+
-          (daysText ? '<div class="ct-days '+daysClass+'">'+daysText+'</div>' : '')+
-          '</div>';
+
+        // Collapsed header row
+        html += '<div class="ct-collapse-header" data-target="'+uid+'" style="display:flex;align-items:center;gap:12px;padding:10px 12px;border-bottom:1px solid #f1f5f9;cursor:pointer;transition:background .15s"'+
+          ' onmouseover="this.style.background=\'#f8fafc\'" onmouseout="this.style.background=\'\'">';
+        html += '<span class="ct-toggle" id="tog_'+uid+'" style="font-size:10px;color:var(--text3);transition:transform .2s;display:inline-block">&#9654;</span>';
+        html += '<div class="ct-cont" style="font-weight:600;color:var(--orange);min-width:120px">'+esc(c.cont)+'</div>';
+        html += '<div style="font-size:13px;color:var(--text2)">ETA: <strong style="color:var(--text)">'+(c.eta||'—')+'</strong></div>';
+        html += '<div style="font-weight:700;font-size:13px;margin-left:auto">'+c.totalQty.toLocaleString()+' pcs</div>';
+        html += '<div style="font-size:12px;color:var(--text2)">'+c.items.length+' items</div>';
+        if(daysText) html += '<div class="ct-days '+daysClass+'">'+daysText+'</div>';
+        html += '</div>';
+
+        // Expandable detail
+        html += '<div class="ct-detail" id="'+uid+'" style="display:none;background:#f8fafc;border-bottom:1px solid #e2e8f0;padding:0">';
+        html += '<table style="width:100%;min-width:auto;margin:0;border-radius:0;box-shadow:none"><thead><tr>';
+        html += '<th style="font-size:10px;padding:6px 10px">Part Number</th>';
+        html += '<th style="font-size:10px;padding:6px 10px">Description</th>';
+        html += '<th style="font-size:10px;padding:6px 10px">Group</th>';
+        html += '<th style="font-size:10px;padding:6px 10px;text-align:right">Qty</th>';
+        html += '</tr></thead><tbody>';
+        c.items.forEach(function(it){
+          html += '<tr><td style="padding:5px 10px;font-size:12px;font-weight:600;white-space:nowrap">'+esc(it.pn)+'</td>';
+          html += '<td style="padding:5px 10px;font-size:12px;color:var(--text2)">'+esc(it.desc)+'</td>';
+          html += '<td style="padding:5px 10px;font-size:11px;color:var(--text2)">'+esc(it.group)+'</td>';
+          html += '<td style="padding:5px 10px;font-size:12px;font-weight:700;text-align:right">'+it.qty.toLocaleString()+'</td></tr>';
+        });
+        html += '</tbody></table></div>';
       });
       html += '</div>';
     });
   }
   html += '</div>';
 
-  // ── Inventory Discrepancy List ──
-  html += '<div class="db-section"><h3><span class="icon">&#9888;</span> Lệch Tồn Kho Thực Tế vs Hệ Thống';
+  // ── Inventory Check Detail Table ──
+  html += '<div class="db-section"><h3><span class="icon">&#128203;</span> Chi Tiết Kiểm Kê Tồn Kho';
   if(daysSinceCheck !== null) {
-    html += ' <span style="font-size:11px;font-weight:400;color:var(--text2);margin-left:8px">(Kiểm tra gần nhất: '+daysSinceCheck+' ngày trước)</span>';
+    html += ' <span style="font-size:11px;font-weight:400;color:var(--text2);margin-left:8px">(Kiểm tra gần nhất: '+lastCheckDisplay+' — '+daysSinceCheck+' ngày trước)</span>';
   }
   html += '</h3>';
-  if(discItems.length === 0) {
-    html += '<div style="text-align:center;padding:20px;color:var(--text2)">'+
-      (checkedCount === 0 ? 'Chưa có dữ liệu kiểm kê. Hãy nhập số lượng thực tế ở các trang nhóm sản phẩm.' : 'Không có lệch tồn. Tất cả '+checkedCount+' items khớp.')+
+  if(checkedItems.length === 0) {
+    html += '<div style="text-align:center;padding:30px 20px;color:var(--text2)">'+
+      '<div style="font-size:36px;margin-bottom:8px">&#128203;</div>'+
+      '<p>Chưa có dữ liệu kiểm kê.</p><p style="font-size:12px">Hãy vào từng nhóm sản phẩm và nhập số lượng thực tế vào cột "Actual" để bắt đầu.</p>'+
       '</div>';
   } else {
-    // Header
-    html += '<div class="disc-row" style="font-weight:700;font-size:11px;text-transform:uppercase;color:var(--text2);border-bottom:2px solid var(--border)">'+
-      '<div class="disc-pn">Part Number</div>'+
-      '<div class="disc-sys">Hệ thống</div>'+
-      '<div class="disc-act">Thực tế</div>'+
-      '<div class="disc-diff">Lệch</div>'+
-      '</div>';
-    discItems.sort(function(a,b){ return Math.abs(b.diff) - Math.abs(a.diff); });
-    discItems.forEach(function(d){
-      var diffSign = d.diff > 0 ? '+' : '';
-      html += '<div class="disc-row">'+
-        '<div class="disc-pn" title="'+esc(d.pn)+'">'+esc(d.pn)+'<br><span style="font-weight:400;font-size:11px;color:var(--text2)">'+esc(d.group)+'</span></div>'+
-        '<div class="disc-sys">'+d.sys.toLocaleString()+'</div>'+
-        '<div class="disc-act">'+d.act.toLocaleString()+'</div>'+
-        '<div class="disc-diff '+(d.diff>0?'pos':'neg')+'">'+diffSign+d.diff.toLocaleString()+'</div>'+
-        '</div>';
+    // Sort: differences first (by abs diff desc), then matching items
+    checkedItems.sort(function(a,b){
+      if(a.diff !== 0 && b.diff === 0) return -1;
+      if(a.diff === 0 && b.diff !== 0) return 1;
+      return Math.abs(b.diff) - Math.abs(a.diff);
     });
+    html += '<div style="overflow-x:auto;-webkit-overflow-scrolling:touch">';
+    html += '<table style="min-width:650px;margin-top:0"><thead><tr>';
+    html += '<th style="font-size:10px;padding:8px 10px">Part Number</th>';
+    html += '<th style="font-size:10px;padding:8px 10px">Description</th>';
+    html += '<th style="font-size:10px;padding:8px 10px">Group</th>';
+    html += '<th style="font-size:10px;padding:8px 10px;text-align:right">Hệ thống</th>';
+    html += '<th style="font-size:10px;padding:8px 10px;text-align:right">Thực tế</th>';
+    html += '<th style="font-size:10px;padding:8px 10px;text-align:right">Chênh lệch</th>';
+    html += '<th style="font-size:10px;padding:8px 10px;text-align:center">Ngày kiểm</th>';
+    html += '</tr></thead><tbody>';
+    checkedItems.forEach(function(d){
+      var diffSign = d.diff > 0 ? '+' : '';
+      var diffClass = d.diff > 0 ? 'pos' : (d.diff < 0 ? 'neg' : 'zero');
+      var rowBg = d.diff !== 0 ? ' style="background:#fff5f5"' : '';
+      html += '<tr'+rowBg+'>';
+      html += '<td style="padding:6px 10px;font-size:12px;font-weight:600;white-space:nowrap">'+esc(d.pn)+'</td>';
+      html += '<td style="padding:6px 10px;font-size:12px;color:var(--text2);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(d.desc)+'">'+esc(d.desc)+'</td>';
+      html += '<td style="padding:6px 10px;font-size:11px;color:var(--text2)">'+esc(d.group)+'</td>';
+      html += '<td style="padding:6px 10px;font-size:13px;font-weight:600;text-align:right">'+d.sys.toLocaleString()+'</td>';
+      html += '<td style="padding:6px 10px;font-size:13px;font-weight:600;text-align:right;color:var(--primary)">'+d.act.toLocaleString()+'</td>';
+      html += '<td class="diff-cell '+diffClass+'" style="padding:6px 10px">'+(d.diff !== 0 ? diffSign+d.diff.toLocaleString() : '&#10003;')+'</td>';
+      html += '<td style="padding:6px 10px;font-size:11px;text-align:center;color:var(--text2)">'+lastCheckDisplay+'</td>';
+      html += '</tr>';
+    });
+    // Summary row
+    var sumSys = checkedItems.reduce(function(s,d){return s+d.sys},0);
+    var sumAct = checkedItems.reduce(function(s,d){return s+d.act},0);
+    var sumDiff = sumAct - sumSys;
+    html += '<tr class="total-row"><td colspan="3" style="text-align:right;padding:8px 10px">Tổng ('+checkedItems.length+' items)</td>';
+    html += '<td style="padding:8px 10px;font-weight:700;text-align:right">'+sumSys.toLocaleString()+'</td>';
+    html += '<td style="padding:8px 10px;font-weight:700;text-align:right;color:var(--primary)">'+sumAct.toLocaleString()+'</td>';
+    html += '<td class="diff-cell '+(sumDiff>0?'pos':(sumDiff<0?'neg':'zero'))+'" style="padding:8px 10px">'+(sumDiff>0?'+':'')+sumDiff.toLocaleString()+'</td>';
+    html += '<td></td></tr>';
+    html += '</tbody></table></div>';
   }
   html += '</div>';
 
   el.innerHTML = html;
 
+  // ── Bind collapsible containers ──
+  el.querySelectorAll('.ct-collapse-header').forEach(function(hdr){
+    hdr.addEventListener('click', function(){
+      var target = document.getElementById(hdr.dataset.target);
+      var tog = document.getElementById('tog_'+hdr.dataset.target);
+      if(target.style.display === 'none') {
+        target.style.display = 'block';
+        tog.style.transform = 'rotate(90deg)';
+      } else {
+        target.style.display = 'none';
+        tog.style.transform = 'rotate(0deg)';
+      }
+    });
+  });
+
   // ── Render Charts ──
   if(typeof Chart === 'undefined') return;
-
   var palette = ['#3b82f6','#f59e0b','#10b981','#ef4444','#8b5cf6','#ec4899','#06b6d4','#84cc16','#f97316','#6366f1','#14b8a6','#e11d48'];
 
   // Chart 1: Stock by group (horizontal bar, top 10)
@@ -1052,18 +1111,7 @@ function renderDashboard() {
     });
   }
 
-  // Chart 3: Status pie
-  var hasStock = DATA.filter(function(r){return r.invQty>0 && r.ongQty===0}).length;
-  var hasInc = DATA.filter(function(r){return r.invQty===0 && r.ongQty>0}).length;
-  var hasBoth = DATA.filter(function(r){return r.invQty>0 && r.ongQty>0}).length;
-  var hasNone = DATA.filter(function(r){return r.invQty===0 && r.ongQty===0}).length;
-  dashCharts.status = new Chart(document.getElementById('chartStatusPie'),{
-    type:'doughnut',
-    data:{labels:['Có tồn','Đang về','Tồn + Đang về','Hết hàng'], datasets:[{data:[hasStock,hasInc,hasBoth,hasNone],backgroundColor:['#10b981','#f59e0b','#3b82f6','#ef4444']}]},
-    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{padding:12,font:{size:12}}}}}
-  });
-
-  // Chart 4: Check progress by group (stacked bar)
+  // Chart 3: Check progress by group (stacked bar, full width)
   var gpChecked = {}, gpTotal = {};
   DATA.forEach(function(r,i){
     gpTotal[r.group] = (gpTotal[r.group]||0) + 1;
@@ -1071,7 +1119,7 @@ function renderDashboard() {
   });
   var cpGroups = groups.filter(function(g){ return (gpChecked[g]||0) > 0; }).sort(function(a,b){ return (gpChecked[b]||0)/(gpTotal[b]||1) - (gpChecked[a]||0)/(gpTotal[a]||1); });
   if(cpGroups.length === 0) cpGroups = groups.slice(0,10);
-  else cpGroups = cpGroups.slice(0,12);
+  else cpGroups = cpGroups.slice(0,15);
   dashCharts.progress = new Chart(document.getElementById('chartCheckProgress'),{
     type:'bar',
     data:{
