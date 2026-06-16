@@ -108,12 +108,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 }
 
 /* ─── MAIN ─── */
-.main{flex:1;overflow-y:auto;display:flex;flex-direction:column}
+.main{flex:1;overflow:hidden;display:flex;flex-direction:column}
 
 /* ─── TOP BAR ─── */
 .topbar{
   padding:16px 24px;background:var(--card);border-bottom:1px solid var(--border);
-  display:flex;align-items:center;gap:16px;position:sticky;top:0;z-index:80;
+  display:flex;align-items:center;gap:16px;flex-shrink:0;z-index:80;
 }
 .topbar .menu-toggle{
   display:none;background:none;border:1px solid var(--border);color:var(--text);
@@ -131,7 +131,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 /* ─── TOOLBAR ─── */
 .toolbar{
   padding:12px 24px;background:var(--card);border-bottom:1px solid var(--border);
-  display:flex;gap:10px;align-items:center;flex-wrap:wrap;
+  display:flex;gap:10px;align-items:center;flex-wrap:wrap;flex-shrink:0;
 }
 .toolbar input{
   padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;flex:1;min-width:160px;
@@ -141,7 +141,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 /* ─── SELECTION BAR ─── */
 .selection-bar{
   display:none;padding:10px 24px;background:#fef3c7;border-bottom:1px solid #fcd34d;
-  align-items:center;gap:12px;font-size:13px;font-weight:500;color:#92400e;
+  align-items:center;gap:12px;font-size:13px;font-weight:500;color:#92400e;flex-shrink:0;
 }
 .selection-bar.show{display:flex}
 .selection-bar .sel-count{font-weight:700;font-size:15px}
@@ -155,9 +155,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .selection-bar .sel-btn.view{background:#f59e0b;color:#fff;border-color:#d97706}
 
 /* ─── TABLE ─── */
-.table-wrap{flex:1;overflow-x:auto;padding:0 24px 80px}
-table{width:100%;border-collapse:collapse;margin-top:12px;background:var(--card);border-radius:10px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.06)}
-thead{position:sticky;top:0;z-index:10}
+.table-wrap{flex:1;overflow:auto;padding:0 24px 80px;-webkit-overflow-scrolling:touch}
+table{width:100%;border-collapse:separate;border-spacing:0;margin-top:12px;background:var(--card);border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,.06);min-width:700px}
+thead th{position:sticky;top:0;z-index:10}
 th{
   background:#f8fafc;padding:10px 12px;text-align:left;font-size:11px;
   text-transform:uppercase;letter-spacing:.5px;color:var(--text2);font-weight:600;
@@ -213,20 +213,17 @@ tr:last-child td{border-bottom:none}
 
   .toolbar{padding:10px 12px;gap:8px}
   .toolbar input{min-width:100px}
-  .table-wrap{padding:0 8px 80px}
+  .table-wrap{padding:0 8px 80px;overflow:auto;-webkit-overflow-scrolling:touch}
+  table{min-width:650px}
   .topbar{padding:12px}
   td,th{padding:6px 8px;font-size:12px}
-  .desc-cell{max-width:120px}
+  .desc-cell{max-width:140px}
   .pn-cell{font-size:12px}
   .qty-cell{font-size:13px}
+  .cont-cell{white-space:nowrap}
   .cont-cell .chip{font-size:10px}
   .selection-bar{padding:8px 12px;font-size:12px;flex-wrap:wrap}
   .selection-bar .sel-actions{margin-left:0;margin-top:4px;width:100%}
-}
-@media(max-width:480px){
-  .desc-cell{display:none}
-  .cont-cell{max-width:100px;overflow:hidden;text-overflow:ellipsis}
-  th:nth-child(3),td:nth-child(3){display:none}
 }
 </style>
 </head>
@@ -413,7 +410,7 @@ function getFilteredData() {
 
   return DATA.filter(function(r) {
     if (activeGroup === '__selected__') {
-      if (!selectedParts.has(r.pn)) return false;
+      if (!selectedParts.has(pnIndex[r.pn])) return false;
     } else if (activeGroup !== '__all__' && r.group !== activeGroup) return false;
 
     if (q && r.pn.toLowerCase().indexOf(q) === -1 && r.desc.toLowerCase().indexOf(q) === -1) return false;
@@ -433,10 +430,18 @@ function sortData(data) {
   });
 }
 
+// Build a lookup: DATA index by pn for safe referencing
+var pnIndex = {};
+DATA.forEach(function(r,i){ pnIndex[r.pn] = i; });
+
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
 function renderContainers(containers) {
   if (!containers || containers.length === 0) return '';
   return containers.map(function(c) {
-    return '<span class="chip">'+c.cont+' ('+c.qty+') ETA: '+(c.eta||'—')+'</span>';
+    return '<span class="chip">'+esc(c.cont)+' ('+c.qty+') ETA: '+(c.eta||'—')+'</span>';
   }).join(' ');
 }
 
@@ -472,12 +477,13 @@ function renderTable() {
     sumInv += r.invQty;
     sumOng += r.ongQty;
     var total = r.invQty + r.ongQty;
-    var checked = selectedParts.has(r.pn);
-    html += '<tr class="'+(checked?'selected':'')+'" data-pn="'+r.pn+'">'+
-      '<td class="cb-cell"><input type="checkbox" '+(checked?'checked':'')+' data-pn="'+r.pn+'"></td>'+
-      '<td class="pn-cell">'+r.pn+(r.ongQty>0?'<span class="badge in">IN</span>':'')+'</td>'+
-      '<td class="desc-cell" title="'+r.desc+'">'+r.desc+'</td>'+
-      (showGroup ? '<td><span style="font-size:11px;color:var(--text2)">'+r.group+'</span></td>' : '')+
+    var idx = pnIndex[r.pn];
+    var checked = selectedParts.has(idx);
+    html += '<tr class="'+(checked?'selected':'')+'">'+
+      '<td class="cb-cell"><input type="checkbox" '+(checked?'checked':'')+' data-idx="'+idx+'"></td>'+
+      '<td class="pn-cell">'+esc(r.pn)+(r.ongQty>0?'<span class="badge in">IN</span>':'')+'</td>'+
+      '<td class="desc-cell" title="'+esc(r.desc)+'">'+esc(r.desc)+'</td>'+
+      (showGroup ? '<td><span style="font-size:11px;color:var(--text2)">'+esc(r.group)+'</span></td>' : '')+
       '<td class="qty-cell '+(r.invQty>0?'has':'zero')+'">'+r.invQty.toLocaleString()+'</td>'+
       '<td class="qty-cell '+(r.ongQty>0?'ong':'zero')+'">'+(r.ongQty>0?r.ongQty.toLocaleString():'—')+'</td>'+
       '<td class="qty-cell" style="text-align:right">'+total.toLocaleString()+'</td>'+
@@ -496,11 +502,12 @@ function renderTable() {
   html += '</tbody></table>';
   wrap.innerHTML = html;
 
-  // Bind checkboxes
-  wrap.querySelectorAll('input[type=checkbox][data-pn]').forEach(function(cb) {
+  // Bind checkboxes using numeric index (safe, no special char issues)
+  wrap.querySelectorAll('input[type=checkbox][data-idx]').forEach(function(cb) {
     cb.addEventListener('change', function() {
-      if (cb.checked) selectedParts.add(cb.dataset.pn);
-      else selectedParts.delete(cb.dataset.pn);
+      var idx = parseInt(cb.dataset.idx);
+      if (cb.checked) selectedParts.add(idx);
+      else selectedParts.delete(idx);
       renderTable();
       renderSidebar();
     });
@@ -508,12 +515,12 @@ function renderTable() {
 
   var selAll = document.getElementById('selectAll');
   if (selAll) {
-    var allPns = filtered.map(function(r){return r.pn});
-    selAll.checked = allPns.length > 0 && allPns.every(function(pn){return selectedParts.has(pn)});
+    var allIdxs = filtered.map(function(r){return pnIndex[r.pn]});
+    selAll.checked = allIdxs.length > 0 && allIdxs.every(function(i){return selectedParts.has(i)});
     selAll.addEventListener('change', function() {
-      allPns.forEach(function(pn) {
-        if (selAll.checked) selectedParts.add(pn);
-        else selectedParts.delete(pn);
+      allIdxs.forEach(function(i) {
+        if (selAll.checked) selectedParts.add(i);
+        else selectedParts.delete(i);
       });
       renderTable();
       renderSidebar();
@@ -542,7 +549,7 @@ function updateSelectionBar() {
   }
   bar.classList.add('show');
   document.getElementById('selCount').textContent = selectedParts.size;
-  var selItems = DATA.filter(function(r){return selectedParts.has(r.pn)});
+  var selItems = DATA.filter(function(r){return selectedParts.has(pnIndex[r.pn])});
   var sInv = selItems.reduce(function(s,r){return s+r.invQty},0);
   var sOng = selItems.reduce(function(s,r){return s+r.ongQty},0);
   document.getElementById('selSummary').textContent =
@@ -575,14 +582,23 @@ document.getElementById('partSearch').addEventListener('input', renderTable);
 document.getElementById('viewFilter').addEventListener('change', renderTable);
 
 document.getElementById('selClear').addEventListener('click', function() {
+  // Remember which group we were viewing before selected view
+  var prevGroup = activeGroup;
   selectedParts.clear();
-  if (activeGroup === '__selected__') activeGroup = groups[0];
+  // Only switch away if we were on the "Selected" virtual view
+  if (prevGroup === '__selected__') {
+    // Go back to All Groups since selected is now empty
+    activeGroup = '__all__';
+  }
+  // Otherwise stay on the current group
   renderTable();
   renderSidebar();
 });
 
 document.getElementById('selView').addEventListener('click', function() {
   activeGroup = '__selected__';
+  document.getElementById('partSearch').value = '';
+  document.getElementById('viewFilter').value = 'all';
   renderSidebar();
   renderTable();
 });
