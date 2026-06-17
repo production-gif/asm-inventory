@@ -385,6 +385,52 @@ tr.selected td:nth-child(1),tr.selected td:nth-child(2){background:#eff6ff}
 .settings-actions .btn-cancel{background:#f1f5f9;color:var(--text)}
 .settings-actions .btn-test{background:#dcfce7;color:var(--green)}
 .sync-status-msg{font-size:12px;padding:8px 12px;border-radius:8px;margin-top:10px;display:none}
+
+/* ─── TAGS & WATCHLIST ─── */
+.tag{display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;cursor:pointer;white-space:nowrap}
+.tag.urgent{background:#fef2f2;color:#dc2626;border:1px solid #fecaca}
+.tag.warning{background:#fff7ed;color:#ea580c;border:1px solid #fed7aa}
+.tag.watch{background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe}
+.tag-btn{background:none;border:1px dashed var(--border);border-radius:4px;padding:2px 6px;font-size:10px;color:var(--text3);cursor:pointer;transition:.15s}
+.tag-btn:hover{border-color:var(--primary);color:var(--primary)}
+.tag-remove{margin-left:2px;font-size:9px;opacity:.6;cursor:pointer}
+.tag-remove:hover{opacity:1}
+
+.tag-popup{display:none;position:absolute;z-index:100;background:#fff;border-radius:10px;box-shadow:0 4px 20px rgba(0,0,0,.15);padding:6px;min-width:130px}
+.tag-popup.show{display:block}
+.tag-popup-item{display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;transition:.1s}
+.tag-popup-item:hover{background:#f8fafc}
+.tag-popup-item .tp-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.tag-popup-item.urgent .tp-dot{background:#dc2626}
+.tag-popup-item.warning .tp-dot{background:#ea580c}
+.tag-popup-item.watch .tp-dot{background:#2563eb}
+.tag-popup-item.remove{color:#94a3b8;font-size:12px;border-top:1px solid #f1f5f9;margin-top:2px;padding-top:10px}
+
+.watchlist{display:none;flex:1;overflow-y:auto;padding:20px 24px 80px;-webkit-overflow-scrolling:touch}
+.watchlist.show{display:block}
+.wl-section{margin-bottom:24px}
+.wl-section-header{display:flex;align-items:center;gap:8px;margin-bottom:12px;padding-bottom:8px;border-bottom:2px solid}
+.wl-section-header.urgent{border-color:#dc2626}
+.wl-section-header.warning{border-color:#ea580c}
+.wl-section-header.watch{border-color:#2563eb}
+.wl-section-header h3{font-size:15px;font-weight:700;display:flex;align-items:center;gap:6px}
+.wl-section-header .wl-count{font-size:12px;color:var(--text2);font-weight:400}
+.wl-card{background:var(--card);border-radius:10px;padding:14px 16px;margin-bottom:8px;box-shadow:0 1px 3px rgba(0,0,0,.06);display:flex;align-items:center;gap:12px;cursor:pointer;transition:.15s}
+.wl-card:hover{box-shadow:0 2px 8px rgba(0,0,0,.1)}
+.wl-card .wl-pn{font-size:13px;font-weight:700;color:var(--text);min-width:160px}
+.wl-card .wl-desc{font-size:12px;color:var(--text2);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wl-card .wl-qty{text-align:right;min-width:70px}
+.wl-card .wl-qty .wl-val{font-size:14px;font-weight:700}
+.wl-card .wl-qty .wl-lbl{font-size:10px;color:var(--text3);text-transform:uppercase}
+.wl-card .wl-remove{padding:6px;border-radius:6px;border:none;background:none;cursor:pointer;color:var(--text3);font-size:16px}
+.wl-card .wl-remove:hover{background:#fef2f2;color:#dc2626}
+.wl-empty{text-align:center;padding:40px 20px;color:var(--text2)}
+.wl-empty .wl-em-icon{font-size:48px;margin-bottom:12px}
+@media(max-width:768px){
+  .wl-card{flex-wrap:wrap;gap:8px}
+  .wl-card .wl-pn{min-width:auto;flex:1}
+  .wl-card .wl-desc{width:100%;order:3}
+}
 </style>
 </head>
 <body>
@@ -473,12 +519,22 @@ tr.selected td:nth-child(1),tr.selected td:nth-child(2){background:#eff6ff}
       <span class="sel-summary" id="selSummary"></span>
       <div class="sel-actions">
         <button class="sel-btn view" id="selView">View Selected</button>
+        <button class="sel-btn" id="selTag" style="background:#fff7ed;color:#ea580c">&#9873; Tag</button>
         <button class="sel-btn" id="selClear">Clear</button>
       </div>
     </div>
     <div class="table-wrap" id="tableWrap"></div>
     <div class="dashboard" id="dashboard"></div>
+    <div class="watchlist" id="watchlist"></div>
   </div>
+</div>
+
+<!-- Tag Popup -->
+<div class="tag-popup" id="tagPopup">
+  <div class="tag-popup-item urgent" data-tag="urgent"><span class="tp-dot"></span>Urgent</div>
+  <div class="tag-popup-item warning" data-tag="warning"><span class="tp-dot"></span>Warning</div>
+  <div class="tag-popup-item watch" data-tag="watch"><span class="tp-dot"></span>Watch</div>
+  <div class="tag-popup-item remove" data-tag="">&#10005; Remove Tag</div>
 </div>
 
 <!-- Settings Modal -->
@@ -583,6 +639,88 @@ function updateExportBar() {
   var cnt = getCheckedCount();
   if (cnt > 0) { bar.style.display = 'flex'; document.getElementById('ebCount').textContent = cnt; }
   else { bar.style.display = 'none'; }
+}
+
+// ─── TAGS (Watchlist) ───
+var TAG_KEY = 'asm_tags';
+var partTags = {}; // idx -> 'urgent'|'warning'|'watch'
+try { partTags = JSON.parse(localStorage.getItem(TAG_KEY)) || {}; } catch(e){}
+function saveTagsLocal() {
+  try { localStorage.setItem(TAG_KEY, JSON.stringify(partTags)); } catch(e){}
+}
+function setTag(idx, tag) {
+  if (!tag) { delete partTags[idx]; } else { partTags[idx] = tag; }
+  saveTagsLocal();
+  pushTagsToCloud();
+}
+function getTag(idx) { return partTags[idx] || null; }
+function getTaggedCount() { return Object.keys(partTags).length; }
+function getTagLabel(tag) { return tag === 'urgent' ? 'Urgent' : (tag === 'warning' ? 'Warning' : 'Watch'); }
+
+var tagPopupTarget = null; // {type:'single', idx:N} or {type:'bulk'}
+function showTagPopup(x, y, target) {
+  tagPopupTarget = target;
+  var popup = document.getElementById('tagPopup');
+  popup.style.left = Math.min(x, window.innerWidth - 150) + 'px';
+  popup.style.top = Math.min(y, window.innerHeight - 180) + 'px';
+  popup.classList.add('show');
+}
+function hideTagPopup() { document.getElementById('tagPopup').classList.remove('show'); tagPopupTarget = null; }
+
+document.getElementById('tagPopup').addEventListener('click', function(e) {
+  var item = e.target.closest('.tag-popup-item');
+  if (!item) return;
+  var tag = item.dataset.tag;
+  if (tagPopupTarget && tagPopupTarget.type === 'single') {
+    setTag(tagPopupTarget.idx, tag || null);
+    renderTable();
+  } else if (tagPopupTarget && tagPopupTarget.type === 'bulk') {
+    selectedParts.forEach(function(idx) { setTag(idx, tag || null); });
+    renderTable();
+    renderSidebar();
+  }
+  hideTagPopup();
+  if (activeGroup === '__watchlist__') renderWatchlist();
+});
+document.addEventListener('click', function(e) {
+  if (!e.target.closest('.tag-popup') && !e.target.closest('.tag-btn') && !e.target.closest('.tag') && !e.target.closest('#selTag')) {
+    hideTagPopup();
+  }
+});
+
+// Tag cloud sync (debounced)
+var tagSyncTimer = null;
+function pushTagsToCloud() {
+  if (!syncUrl) return;
+  clearTimeout(tagSyncTimer);
+  tagSyncTimer = setTimeout(function() {
+    var tagData = {};
+    Object.keys(partTags).forEach(function(idx) {
+      var d = DATA[parseInt(idx)];
+      if (d) tagData[d.pn] = partTags[idx];
+    });
+    fetch(syncUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ type: 'tags', tags: tagData })
+    }).catch(function(err){ console.error('Tag sync failed:', err); });
+  }, 1500);
+}
+function pullTagsFromCloud() {
+  if (!syncUrl) return Promise.resolve();
+  return fetch(syncUrl + '?type=tags')
+  .then(function(r){ return r.json(); })
+  .then(function(res){
+    if (res.tags && Object.keys(res.tags).length > 0) {
+      Object.keys(res.tags).forEach(function(pn) {
+        if (pnIndex[pn] !== undefined) {
+          partTags[pnIndex[pn]] = res.tags[pn];
+        }
+      });
+      saveTagsLocal();
+    }
+  })
+  .catch(function(err){ console.error('Tag pull failed:', err); });
 }
 
 // ─── CLOUD SYNC ───
@@ -755,12 +893,14 @@ if (syncUrl) {
       // Cloud has newer inventory data — reload app with it
       reloadApp(result.data, result.month, result.year);
     }
-    // Then pull actual qty
-    return pullFromCloud();
+    // Then pull actual qty + tags
+    return Promise.all([pullFromCloud(), pullTagsFromCloud()]);
   }).then(function(){
     updateExportBar();
+    renderSidebar();
     renderTable();
     if(activeGroup === '__dashboard__') renderDashboard();
+    if(activeGroup === '__watchlist__') renderWatchlist();
   }).catch(function(){ updateSyncUI('error', 'Offline'); });
 } else {
   updateSyncUI('offline', 'Offline');
@@ -787,6 +927,13 @@ function renderSidebar() {
     '<div class="sb-icon" style="background:rgba(37,99,235,.2);color:#3b82f6">&#128202;</div>'+
     '<div class="sb-label">Dashboard</div>'+
     '<div class="sb-badge" style="color:#3b82f6">&#9679;</div></div>';
+
+  // Watchlist
+  var wlCount = getTaggedCount();
+  html += '<div class="sb-item '+(activeGroup==='__watchlist__'?'active':'')+'" data-group="__watchlist__">'+
+    '<div class="sb-icon" style="background:rgba(220,38,38,.15);color:#dc2626">&#9888;</div>'+
+    '<div class="sb-label">Watchlist</div>'+
+    (wlCount > 0 ? '<div class="sb-badge" style="color:#dc2626">'+wlCount+'</div>' : '')+'</div>';
 
   // All groups
   var allIcon = '&#127968;';
@@ -835,24 +982,30 @@ function renderSidebar() {
 function toggleView() {
   var tw = document.getElementById('tableWrap');
   var db = document.getElementById('dashboard');
+  var wl = document.getElementById('watchlist');
   var tb = document.querySelector('.toolbar');
   var eb = document.getElementById('exportBar');
   var sb = document.getElementById('selectionBar');
+  // Hide all first
+  tw.style.display = 'none';
+  tb.style.display = 'none';
+  if(eb) eb.style.display = 'none';
+  if(sb) sb.classList.remove('show');
+  db.classList.remove('show');
+  wl.classList.remove('show');
+
   if (activeGroup === '__dashboard__') {
-    tw.style.display = 'none';
-    tb.style.display = 'none';
-    if(eb) eb.style.display = 'none';
-    if(sb) sb.classList.remove('show');
     db.classList.add('show');
     renderDashboard();
-    updatePageTitle();
+  } else if (activeGroup === '__watchlist__') {
+    wl.classList.add('show');
+    renderWatchlist();
   } else {
     tw.style.display = '';
     tb.style.display = '';
-    db.classList.remove('show');
     renderTable();
-    updatePageTitle();
   }
+  updatePageTitle();
 }
 
 function updatePageTitle() {
@@ -860,6 +1013,18 @@ function updatePageTitle() {
   if (activeGroup === '__dashboard__') title = 'Dashboard';
   if (activeGroup === '__all__') title = 'All Groups';
   if (activeGroup === '__selected__') title = 'Selected Items';
+  if (activeGroup === '__watchlist__') title = 'Watchlist';
+  if (activeGroup === '__watchlist__') {
+    var uc = Object.values(partTags).filter(function(t){return t==='urgent'}).length;
+    var wc = Object.values(partTags).filter(function(t){return t==='warning'}).length;
+    var wac = Object.values(partTags).filter(function(t){return t==='watch'}).length;
+    document.getElementById('pageTitle').innerHTML = '&#9888; Watchlist <span class="pt-sub">'+getTaggedCount()+' items</span>';
+    document.getElementById('topbarStats').innerHTML =
+      '<div class="ts"><div class="tv" style="color:#dc2626">'+uc+'</div><div class="tl">Urgent</div></div>'+
+      '<div class="ts"><div class="tv" style="color:#ea580c">'+wc+'</div><div class="tl">Warning</div></div>'+
+      '<div class="ts"><div class="tv" style="color:#2563eb">'+wac+'</div><div class="tl">Watch</div></div>';
+    return;
+  }
   if (activeGroup === '__dashboard__') {
     document.getElementById('pageTitle').innerHTML = '&#128202; Dashboard <span class="pt-sub">Overview</span>';
     document.getElementById('topbarStats').innerHTML =
@@ -960,6 +1125,7 @@ function renderTable() {
     '<th style="text-align:right" class="no-sort">Diff</th>'+
     '<th class="'+(sortCol==='ongQty'?'sorted':'')+'" data-col="ongQty" style="text-align:right">Incoming'+si('ongQty')+'</th>'+
     '<th class="no-sort">Container / ETA</th>'+
+    '<th class="no-sort" style="width:70px;text-align:center">Tag</th>'+
     '</tr></thead><tbody>';
 
   var sumInv = 0, sumOng = 0, sumActual = 0, hasActualSum = false;
@@ -984,6 +1150,7 @@ function renderTable() {
       '<td class="diff-cell '+diffClass+'">'+diffText+'</td>'+
       '<td class="qty-cell '+(r.ongQty>0?'ong':'zero')+'">'+(r.ongQty>0?r.ongQty.toLocaleString():'—')+'</td>'+
       '<td class="cont-cell">'+renderContainers(r.containers)+'</td>'+
+      '<td style="text-align:center">'+(getTag(idx) ? '<span class="tag '+getTag(idx)+'" data-tidx="'+idx+'">'+getTagLabel(getTag(idx))+'<span class="tag-remove" data-tridx="'+idx+'">&#10005;</span></span>' : '<button class="tag-btn" data-tidx="'+idx+'">+ Tag</button>')+'</td>'+
       '</tr>';
   });
 
@@ -994,7 +1161,7 @@ function renderTable() {
     '<td style="text-align:center;font-weight:700">'+(hasActualSum?sumActual.toLocaleString():'')+'</td>'+
     '<td class="diff-cell '+(hasActualSum?(sumActual-sumInv>0?'pos':(sumActual-sumInv<0?'neg':'zero')):'')+'">'+(hasActualSum?(sumActual-sumInv>0?'+':'')+((sumActual-sumInv).toLocaleString()):'')+'</td>'+
     '<td class="qty-cell ong">'+(sumOng>0?sumOng.toLocaleString():'—')+'</td>'+
-    '<td></td></tr>';
+    '<td></td><td></td></tr>';
 
   html += '</tbody></table>';
   wrap.innerHTML = html;
@@ -1010,11 +1177,29 @@ function renderTable() {
     });
   });
 
+  // Tag buttons
+  wrap.querySelectorAll('.tag-btn, .tag[data-tidx]').forEach(function(btn) {
+    btn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      var idx = parseInt(btn.dataset.tidx);
+      var rect = btn.getBoundingClientRect();
+      showTagPopup(rect.left, rect.bottom + 4, {type:'single', idx: idx});
+    });
+  });
+  wrap.querySelectorAll('.tag-remove').forEach(function(btn) {
+    btn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      setTag(parseInt(btn.dataset.tridx), null);
+      renderTable();
+      renderSidebar();
+    });
+  });
+
   // Mobile: tap row to open bottom sheet
   wrap.querySelectorAll('tr[data-ridx]').forEach(function(row) {
     row.addEventListener('click', function(e) {
-      // Don't trigger on checkbox or input clicks
-      if(e.target.tagName === 'INPUT') return;
+      // Don't trigger on checkbox, input, or tag clicks
+      if(e.target.tagName === 'INPUT' || e.target.closest('.tag-btn') || e.target.closest('.tag')) return;
       var idx = parseInt(row.dataset.ridx);
       openBottomSheet(idx);
     });
@@ -1135,6 +1320,11 @@ document.getElementById('selView').addEventListener('click', function() {
   document.getElementById('viewFilter').value = 'all';
   renderSidebar();
   toggleView();
+});
+
+document.getElementById('selTag').addEventListener('click', function(e) {
+  var rect = e.target.getBoundingClientRect();
+  showTagPopup(rect.left, rect.bottom + 4, {type:'bulk'});
 });
 
 // ─── EXPORT EXCEL ───
@@ -1306,6 +1496,75 @@ var dashCharts = {};
 function destroyDashCharts() {
   Object.keys(dashCharts).forEach(function(k){ if(dashCharts[k]) dashCharts[k].destroy(); });
   dashCharts = {};
+}
+
+// ─── WATCHLIST ───
+function renderWatchlist() {
+  var el = document.getElementById('watchlist');
+  var sections = ['urgent','warning','watch'];
+  var sectionLabels = {urgent:'Urgent',warning:'Warning',watch:'Watch'};
+  var sectionIcons = {urgent:'&#128680;',warning:'&#9888;',watch:'&#128065;'};
+
+  // Group tagged items by tag type
+  var grouped = {urgent:[], warning:[], watch:[]};
+  Object.keys(partTags).forEach(function(idx) {
+    var tag = partTags[idx];
+    var d = DATA[parseInt(idx)];
+    if (d && grouped[tag]) {
+      grouped[tag].push({idx: parseInt(idx), data: d, tag: tag});
+    }
+  });
+
+  if (getTaggedCount() === 0) {
+    el.innerHTML = '<div class="wl-empty"><div class="wl-em-icon">&#9888;</div>'+
+      '<p style="font-size:16px;font-weight:600;margin-bottom:8px">No items in watchlist</p>'+
+      '<p style="font-size:13px">Go to any product group, click the tag button on a row or select multiple items and use "Tag" to add items here.</p></div>';
+    return;
+  }
+
+  var html = '';
+  sections.forEach(function(tag) {
+    var items = grouped[tag];
+    if (items.length === 0) return;
+    html += '<div class="wl-section">';
+    html += '<div class="wl-section-header '+tag+'"><h3>'+sectionIcons[tag]+' '+sectionLabels[tag]+'</h3><span class="wl-count">'+items.length+' items</span></div>';
+    items.forEach(function(item) {
+      var r = item.data;
+      var act = getActual(item.idx);
+      var diff = act !== null ? act - r.invQty : null;
+      html += '<div class="wl-card" data-wlidx="'+item.idx+'">'+
+        '<div class="wl-pn">'+esc(r.pn)+'</div>'+
+        '<div class="wl-desc" title="'+esc(r.desc)+'">'+esc(r.desc)+'</div>'+
+        '<div class="wl-qty"><div class="wl-val" style="color:var(--green)">'+r.invQty.toLocaleString()+'</div><div class="wl-lbl">System</div></div>'+
+        (r.ongQty > 0 ? '<div class="wl-qty"><div class="wl-val" style="color:var(--orange)">'+r.ongQty.toLocaleString()+'</div><div class="wl-lbl">Incoming</div></div>' : '')+
+        (act !== null ? '<div class="wl-qty"><div class="wl-val" style="color:var(--primary)">'+act.toLocaleString()+'</div><div class="wl-lbl">Actual</div></div>' : '')+
+        (diff !== null && diff !== 0 ? '<div class="wl-qty"><div class="wl-val" style="color:'+(diff<0?'#dc2626':'var(--green)')+'">'+( diff>0?'+':'')+diff.toLocaleString()+'</div><div class="wl-lbl">Diff</div></div>' : '')+
+        '<button class="wl-remove" data-rmidx="'+item.idx+'" title="Remove from watchlist">&#10005;</button>'+
+        '</div>';
+    });
+    html += '</div>';
+  });
+
+  el.innerHTML = html;
+
+  // Bind remove buttons
+  el.querySelectorAll('.wl-remove').forEach(function(btn) {
+    btn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      setTag(parseInt(btn.dataset.rmidx), null);
+      renderWatchlist();
+      renderSidebar();
+      updatePageTitle();
+    });
+  });
+
+  // Bind card click → open bottom sheet
+  el.querySelectorAll('.wl-card').forEach(function(card) {
+    card.addEventListener('click', function(e) {
+      if (e.target.closest('.wl-remove')) return;
+      openBottomSheet(parseInt(card.dataset.wlidx));
+    });
+  });
 }
 
 function renderDashboard() {
