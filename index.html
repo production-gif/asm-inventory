@@ -711,13 +711,22 @@ function pullTagsFromCloud() {
   return fetch(syncUrl + '?type=tags')
   .then(function(r){ return r.json(); })
   .then(function(res){
-    if (res.tags && Object.keys(res.tags).length > 0) {
-      Object.keys(res.tags).forEach(function(pn) {
-        if (pnIndex[pn] !== undefined) {
-          partTags[pnIndex[pn]] = res.tags[pn];
-        }
-      });
-      saveTagsLocal();
+    if (res.tags) {
+      var cloudCount = Object.keys(res.tags).length;
+      var localCount = Object.keys(partTags).length;
+      if (cloudCount > 0) {
+        // Cloud has data — full replace local with cloud
+        partTags = {};
+        Object.keys(res.tags).forEach(function(pn) {
+          if (pnIndex[pn] !== undefined) {
+            partTags[pnIndex[pn]] = res.tags[pn];
+          }
+        });
+        saveTagsLocal();
+      } else if (localCount > 0) {
+        // Cloud is empty but local has tags — push local to cloud
+        pushTagsToCloud();
+      }
     }
   })
   .catch(function(err){ console.error('Tag pull failed:', err); });
@@ -762,8 +771,11 @@ function pullFromCloud() {
   .then(function(r){ return r.json(); })
   .then(function(res){
     if (res.error) { updateSyncUI('error', 'Error'); return; }
-    if (res.data && Object.keys(res.data).length > 0) {
-      // Map PN-based cloud data back to index-based local storage
+    var cloudCount = res.data ? Object.keys(res.data).length : 0;
+    var localCount = Object.keys(actualQty).length;
+    if (cloudCount > 0) {
+      // Cloud has data — full replace local with cloud
+      actualQty = {};
       var cloudData = res.data;
       Object.keys(cloudData).forEach(function(pn) {
         if (pnIndex[pn] !== undefined) {
@@ -771,10 +783,16 @@ function pullFromCloud() {
         }
       });
       saveActualLocal();
-      // Update last check date from cloud
       if (res.lastCheck) {
         try { localStorage.setItem('asm_last_check_date', res.lastCheck); } catch(e){}
       }
+    } else if (localCount > 0) {
+      // Cloud is empty but local has data — push local to cloud
+      pushToCloud();
+    } else {
+      // Both empty — clear local
+      actualQty = {};
+      saveActualLocal();
     }
     updateSyncUI('online', 'Synced');
   })
@@ -822,7 +840,16 @@ document.getElementById('settingsSave').addEventListener('click', function(){
   try { localStorage.setItem(SYNC_URL_KEY, url); } catch(e){}
   closeSettings();
   if (url) {
-    pullFromCloud().then(function(){ renderTable(); if(activeGroup === '__dashboard__') renderDashboard(); });
+    // Push any existing local data to cloud first, then pull
+    if (Object.keys(actualQty).length > 0) pushToCloud();
+    if (Object.keys(partTags).length > 0) pushTagsToCloud();
+    pullFromCloud().then(function(){
+      return pullTagsFromCloud();
+    }).then(function(){
+      renderTable(); renderSidebar();
+      if(activeGroup === '__dashboard__') renderDashboard();
+      if(activeGroup === '__watchlist__') renderWatchlist();
+    });
   } else {
     updateSyncUI('offline', 'Offline');
   }
@@ -1391,7 +1418,9 @@ document.getElementById('ebClearActual').addEventListener('click', function() {
     .catch(function(err){ updateSyncUI('error', 'Error'); });
   }
   renderTable();
+  renderSidebar();
   if(activeGroup === '__dashboard__') renderDashboard();
+  if(activeGroup === '__watchlist__') renderWatchlist();
 });
 
 // Swipe gestures
@@ -1570,6 +1599,12 @@ function renderWatchlist() {
   html += '<div class="db-card '+(diffCount>0?'red':'')+'"><div class="dc-icon">&#8800;</div><div class="dc-val">'+diffCount+'</div><div class="dc-label">Differences</div></div>';
   html += '</div>';
 
+  // Action buttons
+  html += '<div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap">';
+  html += '<button id="wlUpdate" style="display:flex;align-items:center;gap:6px;padding:8px 16px;border:1px solid var(--border);border-radius:8px;background:var(--primary);color:#fff;font-size:13px;font-weight:600;cursor:pointer">&#8635; Update</button>';
+  html += '<button id="wlClear" style="display:flex;align-items:center;gap:6px;padding:8px 16px;border:1px solid #dc2626;border-radius:8px;background:#fff;color:#dc2626;font-size:13px;font-weight:600;cursor:pointer">&#128465; Clear All</button>';
+  html += '</div>';
+
   // Table
   html += '<div class="db-section"><h3><span class="icon">&#9888;</span> Watchlist &amp; Inventory Check';
   if(lastCheckTs) html += ' <span style="font-size:11px;font-weight:400;color:var(--text2);margin-left:8px">(Last checked: '+lastCheckDisplay+')</span>';
@@ -1652,6 +1687,51 @@ function renderWatchlist() {
       var rect = tag.getBoundingClientRect();
       showTagPopup(rect.left, rect.bottom + 4, {type:'single', idx: idx});
     });
+  });
+
+  // Update button — force sync from cloud
+  var updateBtn = document.getElementById('wlUpdate');
+  if (updateBtn) updateBtn.addEventListener('click', function() {
+    if (!syncUrl) { alert('Please configure sync URL first (click the sync indicator).'); return; }
+    updateSyncUI('syncing', 'Updating...');
+    // Push local changes first, then pull latest
+    pushToCloud();
+    pushTagsToCloud();
+    setTimeout(function(){
+      Promise.all([pullFromCloud(), pullTagsFromCloud()]).then(function(){
+        renderWatchlist();
+        renderSidebar();
+        updatePageTitle();
+        if(activeGroup === '__dashboard__') renderDashboard();
+        updateSyncUI('online', 'Synced');
+      }).catch(function(){ updateSyncUI('error', 'Error'); });
+    }, 2000); // Wait for push to complete
+  });
+
+  // Clear All button — remove all tags + actual qty
+  var clearBtn = document.getElementById('wlClear');
+  if (clearBtn) clearBtn.addEventListener('click', function() {
+    if (!confirm('Clear all watchlist data? This will remove all tags and actual quantities.')) return;
+    // Clear tags
+    partTags = {};
+    saveTagsLocal();
+    pushTagsToCloud();
+    // Clear actual qty
+    actualQty = {};
+    saveActualLocal();
+    // Clear cloud actual qty
+    if (syncUrl) {
+      fetch(syncUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify({ type: 'clearActual' })
+      }).catch(function(err){ console.error('Clear cloud failed:', err); });
+    }
+    try { localStorage.removeItem('asm_last_check_date'); } catch(e){}
+    renderWatchlist();
+    renderSidebar();
+    updatePageTitle();
+    updateExportBar();
   });
 }
 
