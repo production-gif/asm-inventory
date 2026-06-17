@@ -928,8 +928,9 @@ function renderSidebar() {
     '<div class="sb-label">Dashboard</div>'+
     '<div class="sb-badge" style="color:#3b82f6">&#9679;</div></div>';
 
-  // Watchlist
-  var wlCount = getTaggedCount();
+  // Watchlist (tags + checked items)
+  var wlCheckedOnly = Object.keys(actualQty).filter(function(k){return !partTags[k]}).length;
+  var wlCount = getTaggedCount() + wlCheckedOnly;
   html += '<div class="sb-item '+(activeGroup==='__watchlist__'?'active':'')+'" data-group="__watchlist__">'+
     '<div class="sb-icon" style="background:rgba(220,38,38,.15);color:#dc2626">&#9888;</div>'+
     '<div class="sb-label">Watchlist</div>'+
@@ -1018,11 +1019,14 @@ function updatePageTitle() {
     var uc = Object.values(partTags).filter(function(t){return t==='urgent'}).length;
     var wc = Object.values(partTags).filter(function(t){return t==='warning'}).length;
     var wac = Object.values(partTags).filter(function(t){return t==='watch'}).length;
-    document.getElementById('pageTitle').innerHTML = '&#9888; Watchlist <span class="pt-sub">'+getTaggedCount()+' items</span>';
+    var chkOnly = Object.keys(actualQty).filter(function(k){return !partTags[k]}).length;
+    var totalWl = getTaggedCount() + chkOnly;
+    document.getElementById('pageTitle').innerHTML = '&#9888; Watchlist <span class="pt-sub">'+totalWl+' items</span>';
     document.getElementById('topbarStats').innerHTML =
       '<div class="ts"><div class="tv" style="color:#dc2626">'+uc+'</div><div class="tl">Urgent</div></div>'+
       '<div class="ts"><div class="tv" style="color:#ea580c">'+wc+'</div><div class="tl">Warning</div></div>'+
-      '<div class="ts"><div class="tv" style="color:#2563eb">'+wac+'</div><div class="tl">Watch</div></div>';
+      '<div class="ts"><div class="tv" style="color:#2563eb">'+wac+'</div><div class="tl">Watch</div></div>'+
+      (chkOnly > 0 ? '<div class="ts"><div class="tv" style="color:var(--primary)">'+chkOnly+'</div><div class="tl">Checked</div></div>' : '');
     return;
   }
   if (activeGroup === '__dashboard__') {
@@ -1498,52 +1502,119 @@ function destroyDashCharts() {
   dashCharts = {};
 }
 
-// ─── WATCHLIST ───
+// ─── WATCHLIST (Tags + Inventory Check combined) ───
 function renderWatchlist() {
   var el = document.getElementById('watchlist');
-  var sections = ['urgent','warning','watch'];
-  var sectionLabels = {urgent:'Urgent',warning:'Warning',watch:'Watch'};
-  var sectionIcons = {urgent:'&#128680;',warning:'&#9888;',watch:'&#128065;'};
 
-  // Group tagged items by tag type
-  var grouped = {urgent:[], warning:[], watch:[]};
-  Object.keys(partTags).forEach(function(idx) {
-    var tag = partTags[idx];
-    var d = DATA[parseInt(idx)];
-    if (d && grouped[tag]) {
-      grouped[tag].push({idx: parseInt(idx), data: d, tag: tag});
-    }
+  // Collect all items: tagged OR checked
+  var allItems = []; // {idx, data, tag, act, diff}
+  var seen = {};
+  // Tagged items
+  Object.keys(partTags).forEach(function(idxStr) {
+    var idx = parseInt(idxStr);
+    var d = DATA[idx];
+    if (!d) return;
+    var act = getActual(idx);
+    var diff = act !== null ? act - d.invQty : null;
+    allItems.push({idx:idx, data:d, tag:partTags[idxStr], act:act, diff:diff});
+    seen[idx] = true;
+  });
+  // Checked items (not already tagged)
+  Object.keys(actualQty).forEach(function(idxStr) {
+    var idx = parseInt(idxStr);
+    if (seen[idx]) return;
+    var d = DATA[idx];
+    if (!d) return;
+    var act = actualQty[idxStr];
+    var diff = act - d.invQty;
+    allItems.push({idx:idx, data:d, tag:null, act:act, diff:diff});
   });
 
-  if (getTaggedCount() === 0) {
+  if (allItems.length === 0) {
     el.innerHTML = '<div class="wl-empty"><div class="wl-em-icon">&#9888;</div>'+
       '<p style="font-size:16px;font-weight:600;margin-bottom:8px">No items in watchlist</p>'+
-      '<p style="font-size:13px">Go to any product group, click the tag button on a row or select multiple items and use "Tag" to add items here.</p></div>';
+      '<p style="font-size:13px">Go to any product group and enter actual quantities or tag items to add them here.</p></div>';
     return;
   }
 
-  var html = '';
-  sections.forEach(function(tag) {
-    var items = grouped[tag];
-    if (items.length === 0) return;
-    html += '<div class="wl-section">';
-    html += '<div class="wl-section-header '+tag+'"><h3>'+sectionIcons[tag]+' '+sectionLabels[tag]+'</h3><span class="wl-count">'+items.length+' items</span></div>';
-    items.forEach(function(item) {
-      var r = item.data;
-      var act = getActual(item.idx);
-      var diff = act !== null ? act - r.invQty : null;
-      html += '<div class="wl-card" data-wlidx="'+item.idx+'">'+
-        '<div class="wl-pn">'+esc(r.pn)+'</div>'+
-        '<div class="wl-desc" title="'+esc(r.desc)+'">'+esc(r.desc)+'</div>'+
-        '<div class="wl-qty"><div class="wl-val" style="color:var(--green)">'+r.invQty.toLocaleString()+'</div><div class="wl-lbl">System</div></div>'+
-        (r.ongQty > 0 ? '<div class="wl-qty"><div class="wl-val" style="color:var(--orange)">'+r.ongQty.toLocaleString()+'</div><div class="wl-lbl">Incoming</div></div>' : '')+
-        (act !== null ? '<div class="wl-qty"><div class="wl-val" style="color:var(--primary)">'+act.toLocaleString()+'</div><div class="wl-lbl">Actual</div></div>' : '')+
-        (diff !== null && diff !== 0 ? '<div class="wl-qty"><div class="wl-val" style="color:'+(diff<0?'#dc2626':'var(--green)')+'">'+( diff>0?'+':'')+diff.toLocaleString()+'</div><div class="wl-lbl">Diff</div></div>' : '')+
-        '<button class="wl-remove" data-rmidx="'+item.idx+'" title="Remove from watchlist">&#10005;</button>'+
-        '</div>';
-    });
-    html += '</div>';
+  // Sort: urgent first, then warning, then watch, then checked-only; within each group sort by abs diff desc
+  var tagOrder = {urgent:0, warning:1, watch:2};
+  allItems.sort(function(a,b) {
+    var oa = a.tag ? tagOrder[a.tag] : 3;
+    var ob = b.tag ? tagOrder[b.tag] : 3;
+    if (oa !== ob) return oa - ob;
+    // Within same priority: differences first
+    var ad = a.diff !== null ? Math.abs(a.diff) : -1;
+    var bd = b.diff !== null ? Math.abs(b.diff) : -1;
+    return bd - ad;
   });
+
+  // Last check info
+  var lastCheckTs = null;
+  try { lastCheckTs = localStorage.getItem('asm_last_check_date'); } catch(e){}
+  var lastCheckDisplay = lastCheckTs ? new Date(lastCheckTs).toLocaleDateString('en-US') : '—';
+
+  // Summary cards
+  var urgentCount = allItems.filter(function(i){return i.tag==='urgent'}).length;
+  var warningCount = allItems.filter(function(i){return i.tag==='warning'}).length;
+  var watchCount = allItems.filter(function(i){return i.tag==='watch'}).length;
+  var checkedOnly = allItems.filter(function(i){return !i.tag}).length;
+  var diffCount = allItems.filter(function(i){return i.diff !== null && i.diff !== 0}).length;
+
+  var html = '';
+  html += '<div class="db-summary" style="grid-template-columns:repeat(5,1fr)">';
+  html += '<div class="db-card red"><div class="dc-icon">&#128680;</div><div class="dc-val">'+urgentCount+'</div><div class="dc-label">Urgent</div></div>';
+  html += '<div class="db-card orange"><div class="dc-icon">&#9888;</div><div class="dc-val">'+warningCount+'</div><div class="dc-label">Warning</div></div>';
+  html += '<div class="db-card blue"><div class="dc-icon">&#128065;</div><div class="dc-val">'+watchCount+'</div><div class="dc-label">Watch</div></div>';
+  html += '<div class="db-card green"><div class="dc-icon">&#128203;</div><div class="dc-val">'+checkedOnly+'</div><div class="dc-label">Checked</div></div>';
+  html += '<div class="db-card '+(diffCount>0?'red':'')+'"><div class="dc-icon">&#8800;</div><div class="dc-val">'+diffCount+'</div><div class="dc-label">Differences</div></div>';
+  html += '</div>';
+
+  // Table
+  html += '<div class="db-section"><h3><span class="icon">&#9888;</span> Watchlist &amp; Inventory Check';
+  if(lastCheckTs) html += ' <span style="font-size:11px;font-weight:400;color:var(--text2);margin-left:8px">(Last checked: '+lastCheckDisplay+')</span>';
+  html += '</h3>';
+  html += '<div style="overflow-x:auto;-webkit-overflow-scrolling:touch">';
+  html += '<table style="min-width:750px;margin-top:0"><thead><tr>';
+  html += '<th style="font-size:10px;padding:8px 10px;width:80px">Tag</th>';
+  html += '<th style="font-size:10px;padding:8px 10px">Part Number</th>';
+  html += '<th style="font-size:10px;padding:8px 10px">Description</th>';
+  html += '<th style="font-size:10px;padding:8px 10px">Group</th>';
+  html += '<th style="font-size:10px;padding:8px 10px;text-align:right">System</th>';
+  html += '<th style="font-size:10px;padding:8px 10px;text-align:right">Actual</th>';
+  html += '<th style="font-size:10px;padding:8px 10px;text-align:right">Difference</th>';
+  html += '<th style="font-size:10px;padding:8px 10px;text-align:center;width:40px">&#10005;</th>';
+  html += '</tr></thead><tbody>';
+
+  allItems.forEach(function(item) {
+    var r = item.data;
+    var diffSign = item.diff !== null && item.diff > 0 ? '+' : '';
+    var diffClass = item.diff === null ? '' : (item.diff > 0 ? 'pos' : (item.diff < 0 ? 'neg' : 'zero'));
+    var rowBg = item.diff !== null && item.diff !== 0 ? ' style="background:#fff5f5"' : '';
+    var tagHtml = item.tag ? '<span class="tag '+item.tag+'">'+getTagLabel(item.tag)+'</span>' : '<span style="font-size:10px;color:var(--text3)">Checked</span>';
+    html += '<tr'+rowBg+' data-wridx="'+item.idx+'" style="cursor:pointer'+(item.diff !== null && item.diff !== 0 ? ';background:#fff5f5':'')+'">';
+    html += '<td style="padding:6px 10px">'+tagHtml+'</td>';
+    html += '<td style="padding:6px 10px;font-size:12px;font-weight:600;white-space:nowrap">'+esc(r.pn)+'</td>';
+    html += '<td style="padding:6px 10px;font-size:12px;color:var(--text2);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(r.desc)+'">'+esc(r.desc)+'</td>';
+    html += '<td style="padding:6px 10px;font-size:11px;color:var(--text2)">'+esc(r.group)+'</td>';
+    html += '<td style="padding:6px 10px;font-size:13px;font-weight:600;text-align:right">'+r.invQty.toLocaleString()+'</td>';
+    html += '<td style="padding:6px 10px;font-size:13px;font-weight:600;text-align:right;color:var(--primary)">'+(item.act !== null ? item.act.toLocaleString() : '—')+'</td>';
+    html += '<td class="diff-cell '+diffClass+'" style="padding:6px 10px">'+(item.diff !== null ? (item.diff !== 0 ? diffSign+item.diff.toLocaleString() : '&#10003;') : '—')+'</td>';
+    html += '<td style="padding:6px 10px;text-align:center"><button class="wl-remove" data-rmidx="'+item.idx+'" data-rmtag="'+(item.tag?'1':'0')+'" style="border:none;background:none;cursor:pointer;color:var(--text3);font-size:14px" title="Remove">&#10005;</button></td>';
+    html += '</tr>';
+  });
+
+  // Summary row
+  var sumSys = allItems.reduce(function(s,i){return s+i.data.invQty},0);
+  var sumAct = allItems.filter(function(i){return i.act!==null}).reduce(function(s,i){return s+i.act},0);
+  var hasAct = allItems.some(function(i){return i.act!==null});
+  var sumDiff = sumAct - sumSys;
+  html += '<tr class="total-row"><td></td><td colspan="3" style="text-align:right;padding:8px 10px">Total ('+allItems.length+' items)</td>';
+  html += '<td style="padding:8px 10px;font-weight:700;text-align:right">'+sumSys.toLocaleString()+'</td>';
+  html += '<td style="padding:8px 10px;font-weight:700;text-align:right;color:var(--primary)">'+(hasAct?sumAct.toLocaleString():'')+'</td>';
+  html += '<td class="diff-cell '+(hasAct?(sumDiff>0?'pos':(sumDiff<0?'neg':'zero')):'')+'" style="padding:8px 10px">'+(hasAct?(sumDiff>0?'+':'')+sumDiff.toLocaleString():'')+'</td>';
+  html += '<td></td></tr>';
+  html += '</tbody></table></div></div>';
 
   el.innerHTML = html;
 
@@ -1551,18 +1622,35 @@ function renderWatchlist() {
   el.querySelectorAll('.wl-remove').forEach(function(btn) {
     btn.addEventListener('click', function(e) {
       e.stopPropagation();
-      setTag(parseInt(btn.dataset.rmidx), null);
+      var idx = parseInt(btn.dataset.rmidx);
+      var hasTag = btn.dataset.rmtag === '1';
+      if (hasTag) {
+        setTag(idx, null);
+      } else {
+        // Remove actual qty for checked-only items
+        setActual(idx, null);
+      }
       renderWatchlist();
       renderSidebar();
       updatePageTitle();
     });
   });
 
-  // Bind card click → open bottom sheet
-  el.querySelectorAll('.wl-card').forEach(function(card) {
-    card.addEventListener('click', function(e) {
+  // Bind row click → open bottom sheet
+  el.querySelectorAll('tr[data-wridx]').forEach(function(row) {
+    row.addEventListener('click', function(e) {
       if (e.target.closest('.wl-remove')) return;
-      openBottomSheet(parseInt(card.dataset.wlidx));
+      openBottomSheet(parseInt(row.dataset.wridx));
+    });
+  });
+
+  // Bind tag click to change tag
+  el.querySelectorAll('.tag').forEach(function(tag) {
+    tag.addEventListener('click', function(e) {
+      e.stopPropagation();
+      var idx = parseInt(tag.closest('tr').dataset.wridx);
+      var rect = tag.getBoundingClientRect();
+      showTagPopup(rect.left, rect.bottom + 4, {type:'single', idx: idx});
     });
   });
 }
@@ -1693,60 +1781,17 @@ function renderDashboard() {
   }
   html += '</div>';
 
-  // ── Inventory Check Detail Table ──
-  html += '<div class="db-section"><h3><span class="icon">&#128203;</span> Inventory Check Details';
-  if(daysSinceCheck !== null) {
-    html += ' <span style="font-size:11px;font-weight:400;color:var(--text2);margin-left:8px">(Last checked: '+lastCheckDisplay+' — '+daysSinceCheck+' days ago)</span>';
+  // ── Inventory Check link to Watchlist ──
+  if(checkedCount > 0) {
+    html += '<div class="db-section" style="cursor:pointer" id="dbGoWatchlist"><h3><span class="icon">&#128203;</span> Inventory Check: '+checkedCount+' items checked';
+    if(daysSinceCheck !== null) {
+      html += ' <span style="font-size:11px;font-weight:400;color:var(--text2);margin-left:8px">(Last checked: '+lastCheckDisplay+' — '+daysSinceCheck+' days ago)</span>';
+    }
+    if(discCount > 0) {
+      html += ' <span style="font-size:11px;font-weight:500;color:#dc2626;margin-left:8px">'+discCount+' differences found</span>';
+    }
+    html += '</h3><p style="font-size:12px;color:var(--text2)">View details in Watchlist &#8594;</p></div>';
   }
-  html += '</h3>';
-  if(checkedItems.length === 0) {
-    html += '<div style="text-align:center;padding:30px 20px;color:var(--text2)">'+
-      '<div style="font-size:36px;margin-bottom:8px">&#128203;</div>'+
-      '<p>No inventory check data yet.</p><p style="font-size:12px">Go to each product group and enter actual quantities in the "Actual" column to begin.</p>'+
-      '</div>';
-  } else {
-    // Sort: differences first (by abs diff desc), then matching items
-    checkedItems.sort(function(a,b){
-      if(a.diff !== 0 && b.diff === 0) return -1;
-      if(a.diff === 0 && b.diff !== 0) return 1;
-      return Math.abs(b.diff) - Math.abs(a.diff);
-    });
-    html += '<div style="overflow-x:auto;-webkit-overflow-scrolling:touch">';
-    html += '<table style="min-width:650px;margin-top:0"><thead><tr>';
-    html += '<th style="font-size:10px;padding:8px 10px">Part Number</th>';
-    html += '<th style="font-size:10px;padding:8px 10px">Description</th>';
-    html += '<th style="font-size:10px;padding:8px 10px">Group</th>';
-    html += '<th style="font-size:10px;padding:8px 10px;text-align:right">System</th>';
-    html += '<th style="font-size:10px;padding:8px 10px;text-align:right">Actual</th>';
-    html += '<th style="font-size:10px;padding:8px 10px;text-align:right">Difference</th>';
-    html += '<th style="font-size:10px;padding:8px 10px;text-align:center">Check Date</th>';
-    html += '</tr></thead><tbody>';
-    checkedItems.forEach(function(d){
-      var diffSign = d.diff > 0 ? '+' : '';
-      var diffClass = d.diff > 0 ? 'pos' : (d.diff < 0 ? 'neg' : 'zero');
-      var rowBg = d.diff !== 0 ? ' style="background:#fff5f5"' : '';
-      html += '<tr'+rowBg+'>';
-      html += '<td style="padding:6px 10px;font-size:12px;font-weight:600;white-space:nowrap">'+esc(d.pn)+'</td>';
-      html += '<td style="padding:6px 10px;font-size:12px;color:var(--text2);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(d.desc)+'">'+esc(d.desc)+'</td>';
-      html += '<td style="padding:6px 10px;font-size:11px;color:var(--text2)">'+esc(d.group)+'</td>';
-      html += '<td style="padding:6px 10px;font-size:13px;font-weight:600;text-align:right">'+d.sys.toLocaleString()+'</td>';
-      html += '<td style="padding:6px 10px;font-size:13px;font-weight:600;text-align:right;color:var(--primary)">'+d.act.toLocaleString()+'</td>';
-      html += '<td class="diff-cell '+diffClass+'" style="padding:6px 10px">'+(d.diff !== 0 ? diffSign+d.diff.toLocaleString() : '&#10003;')+'</td>';
-      html += '<td style="padding:6px 10px;font-size:11px;text-align:center;color:var(--text2)">'+lastCheckDisplay+'</td>';
-      html += '</tr>';
-    });
-    // Summary row
-    var sumSys = checkedItems.reduce(function(s,d){return s+d.sys},0);
-    var sumAct = checkedItems.reduce(function(s,d){return s+d.act},0);
-    var sumDiff = sumAct - sumSys;
-    html += '<tr class="total-row"><td colspan="3" style="text-align:right;padding:8px 10px">Total ('+checkedItems.length+' items)</td>';
-    html += '<td style="padding:8px 10px;font-weight:700;text-align:right">'+sumSys.toLocaleString()+'</td>';
-    html += '<td style="padding:8px 10px;font-weight:700;text-align:right;color:var(--primary)">'+sumAct.toLocaleString()+'</td>';
-    html += '<td class="diff-cell '+(sumDiff>0?'pos':(sumDiff<0?'neg':'zero'))+'" style="padding:8px 10px">'+(sumDiff>0?'+':'')+sumDiff.toLocaleString()+'</td>';
-    html += '<td></td></tr>';
-    html += '</tbody></table></div>';
-  }
-  html += '</div>';
 
   el.innerHTML = html;
 
@@ -1764,6 +1809,10 @@ function renderDashboard() {
       }
     });
   });
+
+  // ── Link to watchlist from dashboard ──
+  var goWl = document.getElementById('dbGoWatchlist');
+  if(goWl) goWl.addEventListener('click', function(){ activeGroup='__watchlist__'; renderSidebar(); toggleView(); });
 
   // ── Render Charts ──
   if(typeof Chart === 'undefined') return;
