@@ -1610,12 +1610,14 @@ function renderWatchlist() {
   if(lastCheckTs) html += ' <span style="font-size:11px;font-weight:400;color:var(--text2);margin-left:8px">(Last checked: '+lastCheckDisplay+')</span>';
   html += '</h3>';
   html += '<div style="overflow-x:auto;-webkit-overflow-scrolling:touch">';
-  html += '<table style="min-width:750px;margin-top:0"><thead><tr>';
+  html += '<table style="min-width:950px;margin-top:0"><thead><tr>';
   html += '<th style="font-size:10px;padding:8px 10px;width:80px">Tag</th>';
   html += '<th style="font-size:10px;padding:8px 10px">Part Number</th>';
   html += '<th style="font-size:10px;padding:8px 10px">Description</th>';
   html += '<th style="font-size:10px;padding:8px 10px">Group</th>';
   html += '<th style="font-size:10px;padding:8px 10px;text-align:right">System</th>';
+  html += '<th style="font-size:10px;padding:8px 10px;text-align:right">Incoming</th>';
+  html += '<th style="font-size:10px;padding:8px 10px">ETA</th>';
   html += '<th style="font-size:10px;padding:8px 10px;text-align:right">Actual</th>';
   html += '<th style="font-size:10px;padding:8px 10px;text-align:right">Difference</th>';
   html += '<th style="font-size:10px;padding:8px 10px;text-align:center;width:40px">&#10005;</th>';
@@ -1625,14 +1627,24 @@ function renderWatchlist() {
     var r = item.data;
     var diffSign = item.diff !== null && item.diff > 0 ? '+' : '';
     var diffClass = item.diff === null ? '' : (item.diff > 0 ? 'pos' : (item.diff < 0 ? 'neg' : 'zero'));
-    var rowBg = item.diff !== null && item.diff !== 0 ? ' style="background:#fff5f5"' : '';
     var tagHtml = item.tag ? '<span class="tag '+item.tag+'">'+getTagLabel(item.tag)+'</span>' : '<span style="font-size:10px;color:var(--text3)">Checked</span>';
-    html += '<tr'+rowBg+' data-wridx="'+item.idx+'" style="cursor:pointer'+(item.diff !== null && item.diff !== 0 ? ';background:#fff5f5':'')+'">';
+    // Build ETA display from containers
+    var etaHtml = '—';
+    if (r.containers && r.containers.length > 0) {
+      var etas = r.containers.map(function(c) {
+        var d = c.eta || '—';
+        return '<div style="font-size:11px;white-space:nowrap">'+esc(c.cont)+': '+d+'</div>';
+      });
+      etaHtml = etas.join('');
+    }
+    html += '<tr data-wridx="'+item.idx+'" style="cursor:pointer'+(item.diff !== null && item.diff !== 0 ? ';background:#fff5f5':'')+'">';
     html += '<td style="padding:6px 10px">'+tagHtml+'</td>';
     html += '<td style="padding:6px 10px;font-size:12px;font-weight:600;white-space:nowrap">'+esc(r.pn)+'</td>';
     html += '<td style="padding:6px 10px;font-size:12px;color:var(--text2);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(r.desc)+'">'+esc(r.desc)+'</td>';
     html += '<td style="padding:6px 10px;font-size:11px;color:var(--text2)">'+esc(r.group)+'</td>';
     html += '<td style="padding:6px 10px;font-size:13px;font-weight:600;text-align:right">'+r.invQty.toLocaleString()+'</td>';
+    html += '<td style="padding:6px 10px;font-size:13px;font-weight:600;text-align:right;color:var(--orange)">'+(r.ongQty > 0 ? r.ongQty.toLocaleString() : '—')+'</td>';
+    html += '<td style="padding:6px 10px">'+etaHtml+'</td>';
     html += '<td style="padding:6px 10px;font-size:13px;font-weight:600;text-align:right;color:var(--primary)">'+(item.act !== null ? item.act.toLocaleString() : '—')+'</td>';
     html += '<td class="diff-cell '+diffClass+'" style="padding:6px 10px">'+(item.diff !== null ? (item.diff !== 0 ? diffSign+item.diff.toLocaleString() : '&#10003;') : '—')+'</td>';
     html += '<td style="padding:6px 10px;text-align:center"><button class="wl-remove" data-rmidx="'+item.idx+'" data-rmtag="'+(item.tag?'1':'0')+'" style="border:none;background:none;cursor:pointer;color:var(--text3);font-size:14px" title="Remove">&#10005;</button></td>';
@@ -1641,11 +1653,14 @@ function renderWatchlist() {
 
   // Summary row
   var sumSys = allItems.reduce(function(s,i){return s+i.data.invQty},0);
+  var sumOng = allItems.reduce(function(s,i){return s+i.data.ongQty},0);
   var sumAct = allItems.filter(function(i){return i.act!==null}).reduce(function(s,i){return s+i.act},0);
   var hasAct = allItems.some(function(i){return i.act!==null});
   var sumDiff = sumAct - sumSys;
   html += '<tr class="total-row"><td></td><td colspan="3" style="text-align:right;padding:8px 10px">Total ('+allItems.length+' items)</td>';
   html += '<td style="padding:8px 10px;font-weight:700;text-align:right">'+sumSys.toLocaleString()+'</td>';
+  html += '<td style="padding:8px 10px;font-weight:700;text-align:right;color:var(--orange)">'+(sumOng>0?sumOng.toLocaleString():'')+'</td>';
+  html += '<td></td>';
   html += '<td style="padding:8px 10px;font-weight:700;text-align:right;color:var(--primary)">'+(hasAct?sumAct.toLocaleString():'')+'</td>';
   html += '<td class="diff-cell '+(hasAct?(sumDiff>0?'pos':(sumDiff<0?'neg':'zero')):'')+'" style="padding:8px 10px">'+(hasAct?(sumDiff>0?'+':'')+sumDiff.toLocaleString():'')+'</td>';
   html += '<td></td></tr>';
