@@ -543,7 +543,11 @@ function recalcEst(){
 }
 async function submitLoading(){
   var sel=selectedSOs(); if(!sel.length){alert('Chọn ít nhất 1 SO');return;}
-  try{ var d=await api('createLoading',{vehicle_id:document.getElementById('ldVehicle').value,so_list:sel}); _ldMemo=null; openLoading(d.loading_id); }catch(e){ alert(e.message); }
+  try{ await api('createLoading',{vehicle_id:document.getElementById('ldVehicle').value,so_list:sel}); _ldMemo=null;
+    // Lưu sẵn rồi quay về danh sách — khi ra xuất hàng mở loading này lên để quét
+    flashAlert('good','✓ ĐÃ LƯU LOADING','Mở lại từ danh sách để quét khi xuất hàng', true);
+    setTimeout(function(){ go('outbound'); }, 950);
+  }catch(e){ alert(e.message); }
 }
 async function openLoading(id){
   activeLoading=id; var m=document.getElementById('main'); m.innerHTML='<div class="text-center text-slate-400 py-12">Đang tải loading…</div>';
@@ -669,8 +673,10 @@ function viewReport(m){
 function repTab(t){ _repCur=t; document.getElementById('tabA').className='btn '+(t==='A'?'btn-navy':'btn-ghost'); document.getElementById('tabB').className='btn '+(t==='B'?'btn-navy':'btn-ghost'); loadReport(); }
 async function loadReport(){
   var date=document.getElementById('repDate').value, body=document.getElementById('repBody'); body.innerHTML='<div class="text-center text-slate-400 py-10">Đang tải…</div>';
+  // Nếu là "hôm nay" -> gửi rỗng để MÁY CHỦ tự dùng ngày của nó (khớp đúng timestamp đã lưu, không lệch giờ trình duyệt)
+  var qDate = (date===serverToday()) ? '' : date;
   if(_repCur==='A'){
-    var d=await api('reportInbound',{date:date});
+    var d=await api('reportInbound',{date:qDate});
     body.innerHTML=
     '<div class="card p-5 mb-3"><div class="text-slate-500 text-sm">Tổng đóng gói '+date+'</div><div class="num" style="color:var(--navy)">'+d.total+' cái</div></div>'+
     '<div class="grid md:grid-cols-2 gap-3 mb-3"><div class="card p-4"><div class="font-semibold mb-2 text-slate-700">Theo SKU</div><canvas id="cA1" height="170"></canvas></div>'+
@@ -679,7 +685,7 @@ async function loadReport(){
       d.scans.slice().reverse().map(function(s){return '<tr><td>'+String(s.timestamp).slice(11,19)+'</td><td>'+s.packer_name+'</td><td>'+s.sku_code+'</td></tr>';}).join('')+'</tbody></table></div>';
     barChart('cA1',Object.keys(d.by_sku),Object.values(d.by_sku)); barChart('cA2',Object.keys(d.by_packer),Object.values(d.by_packer),'var(--red)');
   } else {
-    var d=await api('reportOutbound',{date:date});
+    var d=await api('reportOutbound',{date:qDate});
     var errRows=Object.keys(d.by_error).map(function(k){return '<tr><td>'+nameOf(k)+'</td><td class="text-center">'+d.by_error[k]+'</td></tr>';}).join('')||'<tr><td colspan="2" class="text-center text-slate-400 py-3">Không có cảnh báo</td></tr>';
     var cmp=d.compare.map(function(c){ var col=c.status==='KHỚP'?'var(--green)':(c.status==='THIẾU'?'var(--amber)':'var(--red)');
       return '<tr><td>'+c.so_number+'</td><td class="text-center">'+c.ordered+'</td><td class="text-center">'+c.shipped+'</td><td class="text-center">'+c.diff+'</td><td class="text-center"><span class="pill" style="background:'+col+';color:#fff">'+c.status+'</span></td></tr>';}).join('')||'<tr><td colspan="5" class="text-center text-slate-400 py-4">Chưa có lượt xuất</td></tr>';
@@ -697,8 +703,8 @@ var _dashMemo=null;
 function viewDashboard(m){
   if(_dashMemo){ paintDashboard(m,_dashMemo); }   // hiện ngay số liệu lần trước
   else m.innerHTML='<div class="text-center text-slate-400 py-12">Đang tải…</div>';
-  var today=serverToday();
-  api('reportDashboard',{date:today}).then(function(d){ _dashMemo=d; if(currentView==='dashboard') paintDashboard(m,d); })
+  // gửi rỗng -> máy chủ tự dùng ngày của nó (tránh lệch giờ trình duyệt)
+  api('reportDashboard',{date:''}).then(function(d){ _dashMemo=d; if(currentView==='dashboard') paintDashboard(m,d); })
     .catch(function(e){ if(!_dashMemo && currentView==='dashboard') m.innerHTML='<div class="card p-4">'+e.message+'</div>'; });
 }
 function paintDashboard(m,d){
