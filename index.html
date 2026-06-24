@@ -457,17 +457,30 @@ function printLabels(){
 /* ====================================================================
  * 3. XUẤT HÀNG / LOADING
  * ==================================================================== */
-var activeLoading=null, _ldMemo=null;
+var activeLoading=null, _ldMemo=null, _ldAll=[];
 function viewOutbound(m){
   m.innerHTML=
-  '<div class="flex items-center justify-between mb-4"><div class="sectiontitle">Loading hôm nay</div>'+
-    '<button class="btn btn-navy" onclick="openCreateLoading()">+ Tạo Loading</button></div>'+
+  '<div class="flex flex-wrap items-center justify-between gap-2 mb-4"><div class="sectiontitle">Danh sách Loading</div>'+
+    '<div class="flex gap-2 items-center">'+
+      '<select id="ldFilter" class="field" style="min-width:160px;min-height:46px" onchange="renderLdFilter()"><option value="ALL">Tất cả ngày</option></select>'+
+      '<button class="btn btn-navy" onclick="openCreateLoading()">+ Tạo Loading</button></div></div>'+
   '<div id="loadingList" class="space-y-2.5"></div>';
-  if(_ldMemo) paintLoadings(_ldMemo);   // hiện ngay danh sách lần trước -> không chờ
+  if(_ldMemo&&_ldMemo.length){ _ldAll=_ldMemo; buildLdFilter(); renderLdFilter(); }
   else document.getElementById('loadingList').innerHTML='<div class="text-center text-slate-400 py-8">Đang tải…</div>';
-  // date rỗng -> máy chủ tự lọc theo ngày của nó (tránh lệch giờ trình duyệt)
-  api('getLoadings',{date:''}).then(function(r){ _ldMemo=r.items; if(currentView==='outbound') paintLoadings(r.items); })
-    .catch(function(){ if(!_ldMemo && currentView==='outbound') document.getElementById('loadingList').innerHTML='<div class="card p-6 text-center text-slate-400">Không tải được — kiểm tra mạng.</div>'; });
+  // lấy TẤT CẢ loading, lọc theo ngày ở phía app (tránh lệch múi giờ)
+  api('getLoadings',{date:'ALL'}).then(function(r){ _ldMemo=r.items; _ldAll=r.items; if(currentView==='outbound'){ buildLdFilter(); renderLdFilter(); } })
+    .catch(function(){ if(!_ldAll.length && currentView==='outbound') document.getElementById('loadingList').innerHTML='<div class="card p-6 text-center text-slate-400">Không tải được — kiểm tra mạng.</div>'; });
+}
+function buildLdFilter(){
+  var sel=document.getElementById('ldFilter'); if(!sel) return; var cur=sel.value||'ALL';
+  var dates=[]; _ldAll.forEach(function(l){ if(l.loading_date && dates.indexOf(l.loading_date)<0) dates.push(l.loading_date); });
+  dates.sort().reverse();
+  sel.innerHTML='<option value="ALL">Tất cả ngày ('+_ldAll.length+')</option>'+dates.map(function(d){ var n=_ldAll.filter(function(x){return x.loading_date===d;}).length; return '<option value="'+d+'">'+d+' ('+n+')</option>'; }).join('');
+  sel.value = (cur==='ALL'||dates.indexOf(cur)>=0)? cur : 'ALL';
+}
+function renderLdFilter(){
+  var sel=document.getElementById('ldFilter'); var f=sel?sel.value:'ALL';
+  paintLoadings(f==='ALL'? _ldAll : _ldAll.filter(function(l){return String(l.loading_date)===f;}));
 }
 function paintLoadings(lds){
   var list=document.getElementById('loadingList'); if(!list) return; list.innerHTML='';
@@ -491,8 +504,10 @@ function openCreateLoading(pre){
   m.innerHTML=
   '<button class="btn btn-ghost mb-4" onclick="'+(pre?'openLoading(\''+pre.loading_id+'\')':'go(\'outbound\')')+'">← Quay lại</button>'+
   '<div class="sectiontitle mb-3">'+(pre?'Sửa '+pre.loading_id:'Tạo Loading mới')+'</div>'+
-  '<div class="card p-5 mb-3"><div class="font-semibold mb-2 text-slate-700">1 · Chọn xe</div>'+
+  '<div class="card p-5 mb-3"><div class="font-semibold mb-2 text-slate-700">1 · Chọn xe &amp; ngày xuất</div>'+
     '<select id="ldVehicle" class="field" onchange="recalcEst()">'+(vehOpts||'<option value="">— chưa có xe, thêm ở Quản trị —</option>')+'</select>'+
+    '<label class="text-sm text-slate-500 mt-3 mb-1 block">Ngày xuất (loading date)</label>'+
+    '<input type="date" id="ldDate" class="field" value="'+((pre&&pre.loading_date)?pre.loading_date:serverToday())+'">'+
     '<div id="estVol" class="text-sm text-slate-500 mt-2"></div></div>'+
   '<div class="card p-5"><div class="font-semibold mb-2 text-slate-700">2 · Chọn SO để xếp (<span id="soCount">…</span> đơn)</div>'+
     '<input class="field mb-2" placeholder="🔍 Lọc SO / khách..." oninput="filterSO(this.value)">'+
@@ -516,9 +531,9 @@ function applyOpenSOs(list, pre){
 }
 async function updateLoadingSave(id){
   var sel=selectedSOs(); if(!sel.length){ alert('Chọn ít nhất 1 SO'); return; }
-  try{ await api('updateLoading',{loading_id:id, vehicle_id:document.getElementById('ldVehicle').value, so_list:sel}); _ldMemo=null; openLoading(id); }catch(e){ alert(e.message); }
+  try{ await api('updateLoading',{loading_id:id, vehicle_id:document.getElementById('ldVehicle').value, so_list:sel, loading_date:(document.getElementById('ldDate')||{}).value||''}); _ldMemo=null; openLoading(id); }catch(e){ alert(e.message); }
 }
-function editLoading(){ var ld=window._curLoading; if(!ld)return; openCreateLoading({loading_id:ld.loading_id, vehicle_id:ld.vehicle_id, so_list:String(ld.so_list).split(',').filter(String)}); }
+function editLoading(){ var ld=window._curLoading; if(!ld)return; openCreateLoading({loading_id:ld.loading_id, vehicle_id:ld.vehicle_id, loading_date:ld.loading_date, so_list:String(ld.so_list).split(',').filter(String)}); }
 async function deleteLoadingNow(){ var ld=window._curLoading; if(!ld)return; if(!confirm('Xóa loading '+ld.loading_id+'?\nTồn kho sẽ được hoàn lại cho các lượt đã quét trong loading này.'))return;
   try{ await api('deleteLoading',{loading_id:ld.loading_id}); _ldMemo=null; flashAlert('good','✓ ĐÃ XÓA',ld.loading_id, true); setTimeout(function(){go('outbound');},900); }catch(e){ alert(e.message); } }
 function renderSOpick(list){
@@ -543,7 +558,7 @@ function recalcEst(){
 }
 async function submitLoading(){
   var sel=selectedSOs(); if(!sel.length){alert('Chọn ít nhất 1 SO');return;}
-  try{ await api('createLoading',{vehicle_id:document.getElementById('ldVehicle').value,so_list:sel}); _ldMemo=null;
+  try{ await api('createLoading',{vehicle_id:document.getElementById('ldVehicle').value,so_list:sel,loading_date:(document.getElementById('ldDate')||{}).value||''}); _ldMemo=null;
     // Lưu sẵn rồi quay về danh sách — khi ra xuất hàng mở loading này lên để quét
     flashAlert('good','✓ ĐÃ LƯU LOADING','Mở lại từ danh sách để quét khi xuất hàng', true);
     setTimeout(function(){ go('outbound'); }, 950);
