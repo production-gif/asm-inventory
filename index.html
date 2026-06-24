@@ -231,6 +231,7 @@ var NAV = {
 var session=null, cache={skus:[],inventory:[],vehicles:[],settings:{},server_date:''}, currentView=null, lastScan={value:'',t:0};
 // Ngày theo MÚI GIỜ MÁY CHỦ (để báo cáo/loadings khớp với timestamp đã lưu)
 function serverToday(){ return cache.server_date || new Date().toISOString().slice(0,10); }
+function round3(n){ return Math.round((+n||0)*1000)/1000; }
 
 /* logo: dùng logo.png nếu tải được, ngược lại dùng vector */
 function logoHTML(){ return document.getElementById('logoTpl').innerHTML; }
@@ -309,7 +310,10 @@ async function enterApp(){
   try{ var b=await api('getBootstrap'); cache.skus=b.skus||[]; cache.inventory=b.inventory||[]; cache.vehicles=b.vehicles||[]; cache.server_date=b.server_date||'';
        cache.settings={}; (b.settings||[]).forEach(function(s){cache.settings[s.key]=s.value;}); localStorage.setItem(CONFIG.cacheKey,JSON.stringify(cache)); }
   catch(e){ var c=localStorage.getItem(CONFIG.cacheKey); if(c) cache=JSON.parse(c); }
-  flushQueue(); go(ROLES[session.role].home);
+  flushQueue();
+  // nạp trước danh sách SO cần xuất để "Tạo loading" mở tức thì
+  if(['picker','admin','manager'].indexOf(session.role)>=0){ api('getOpenSOs').then(function(r){ _sosMemo=r.items; }).catch(function(){}); }
+  go(ROLES[session.role].home);
 }
 function buildSidebar(){
   var nav=document.getElementById('sbNav'); nav.innerHTML=''; var items=ROLES[session.role].nav; var lastGroup='';
@@ -479,10 +483,9 @@ function paintLoadings(lds){
     list.appendChild(d);
   });
 }
-async function openCreateLoading(pre){
-  pre=pre||null; var m=document.getElementById('main'); var sos=[]; try{ sos=(await api('getOpenSOs')).items; }catch(e){ alert(e.message); }
-  // khi SỬA: đảm bảo các SO đang nằm trong loading vẫn hiện ra dù trạng thái đã đổi
-  if(pre && pre.so_list){ pre.so_list.forEach(function(sn){ if(!sos.some(function(s){return String(s.so_number)===String(sn);})) sos.push({so_number:sn,customer:'(đang trong loading)',delivery_date:'',qty_ordered:0,lines:0}); }); }
+var _sosMemo=null, _editPre=null;
+function openCreateLoading(pre){
+  pre=pre||null; _editPre=pre; var m=document.getElementById('main');
   var preVeh=pre?pre.vehicle_id:'';
   var vehOpts=cache.vehicles.filter(function(v){return String(v.active)!=='false';}).map(function(v){return '<option value="'+v.vehicle_id+'"'+(String(preVeh)===String(v.vehicle_id)?' selected':'')+'>'+v.vehicle_name+' ('+v.capacity_m3+' m³)</option>';}).join('');
   m.innerHTML=
@@ -491,11 +494,23 @@ async function openCreateLoading(pre){
   '<div class="card p-5 mb-3"><div class="font-semibold mb-2 text-slate-700">1 · Chọn xe</div>'+
     '<select id="ldVehicle" class="field" onchange="recalcEst()">'+(vehOpts||'<option value="">— chưa có xe, thêm ở Quản trị —</option>')+'</select>'+
     '<div id="estVol" class="text-sm text-slate-500 mt-2"></div></div>'+
-  '<div class="card p-5"><div class="font-semibold mb-2 text-slate-700">2 · Chọn SO để xếp ('+sos.length+' đơn)</div>'+
+  '<div class="card p-5"><div class="font-semibold mb-2 text-slate-700">2 · Chọn SO để xếp (<span id="soCount">…</span> đơn)</div>'+
     '<input class="field mb-2" placeholder="🔍 Lọc SO / khách..." oninput="filterSO(this.value)">'+
     '<div id="soPick" style="max-height:42vh;overflow:auto;margin:0 -6px"></div></div>'+
   '<button class="btn btn-green w-full mt-3" onclick="'+(pre?'updateLoadingSave(\''+pre.loading_id+'\')':'submitLoading()')+'">💾 '+(pre?'LƯU THAY ĐỔI':'LƯU LOADING')+'</button>';
-  window._openSOs=sos; renderSOpick(sos);
+  // hiện NGAY danh sách SO từ cache (nếu có) -> không chờ
+  if(_sosMemo) applyOpenSOs(_sosMemo, pre); else document.getElementById('soPick').innerHTML='<div class="text-center text-slate-400 py-6">Đang tải đơn…</div>';
+  // làm mới ở nền
+  api('getOpenSOs').then(function(r){ _sosMemo=r.items; if(currentView==='outbound') applyOpenSOs(r.items, _editPre); })
+    .catch(function(){ if(!_sosMemo){ var el=document.getElementById('soPick'); if(el) el.innerHTML='<div class="text-center text-slate-400 py-6">Không tải được đơn — kiểm tra mạng</div>'; } });
+  recalcEst();
+}
+function applyOpenSOs(list, pre){
+  var sos=(list||[]).slice();
+  if(pre && pre.so_list){ pre.so_list.forEach(function(sn){ if(!sos.some(function(s){return String(s.so_number)===String(sn);})) sos.push({so_number:sn,customer:'(đang trong loading)',delivery_date:'',qty_ordered:0,lines:0}); }); }
+  window._openSOs=sos;
+  var c=document.getElementById('soCount'); if(c) c.textContent=sos.length;
+  renderSOpick(sos);
   if(pre && pre.so_list){ [].forEach.call(document.querySelectorAll('.soChk'),function(cb){ if(pre.so_list.indexOf(cb.value)>=0) cb.checked=true; }); }
   recalcEst();
 }
@@ -532,8 +547,12 @@ async function submitLoading(){
 }
 async function openLoading(id){
   activeLoading=id; var m=document.getElementById('main'); m.innerHTML='<div class="text-center text-slate-400 py-12">Đang tải loading…</div>';
-  var d; try{ d=await api('getLoading',{loading_id:id}); }catch(e){ m.innerHTML='<div class="card p-4">'+e.message+'</div>'; return; } renderLoading(d);
+  var d; try{ d=await api('getLoading',{loading_id:id}); }catch(e){ m.innerHTML='<div class="card p-4">'+e.message+'</div>'; return; }
+  window._curD=d; rebuildStock(); renderLoading(d);
+  // làm mới tồn kho ở nền để kiểm tra cục bộ chính xác hơn
+  api('getInventory').then(function(r){ cache.inventory=r.items; rebuildStock(); }).catch(function(){});
 }
+function rebuildStock(){ window._lmStock={}; (cache.inventory||[]).forEach(function(r){ window._lmStock[r.sku_code]=+r.qty_in_stock||0; }); }
 function renderLoading(d){
   var m=document.getElementById('main'), ld=d.loading, pct=d.fill_percent||0, bc=pct>100?'var(--red)':(pct>90?'var(--amber)':'var(--green)');
   window._curLoading=ld;
@@ -560,18 +579,46 @@ function renderLoading(d){
   (ld.status!=='done'?'<button class="btn '+(allDone?'btn-green':'btn-ghost')+' w-full" onclick="completeLoading()">'+(allDone?'✓ HOÀN TẤT LOADING':'Hoàn tất (chưa đủ số lượng)')+'</button>':'');
 }
 function startOutboundScan(){ openScanner('Quét xuất — '+activeLoading, handleOutbound); }
-async function handleOutbound(code){
-  var sku=code.trim();
-  if(!navigator.onLine){ flashAlert('warn','OFFLINE','Khâu xuất cần mạng để kiểm tra. Vui lòng kết nối lại.'); return; }
-  try{ var d=await api('outboundScan',{loading_id:activeLoading,sku_code:sku});
-    if(d.valid){ flashAlert('good','✓ OK',(d.sku.product_name||sku)+'\nSO '+d.so_number+' · '+d.scanned+'/'+d.ordered+' · '+d.fill_percent+'% xe', true);
-      api('getLoading',{loading_id:activeLoading}).then(renderLoading).catch(function(){}); }
-    else flashAlert('bad', nameOf(d.code), d.message);
-  }catch(e){ flashAlert('bad','LỖI', e.message); }
+/* QUÉT XUẤT TỨC THÌ: chạy đủ 7 điểm chặn NGAY trên máy bằng dữ liệu loading + tồn kho đã tải,
+   phản hồi liền, cập nhật bảng ngay; rồi ghi máy chủ ở nền. Máy chủ từ chối -> tự HOÀN TÁC. */
+function handleOutbound(code){
+  var sku=code.trim(); var d=window._curD;
+  if(!d){ flashAlert('bad','LỖI','Chưa tải được loading'); return; }
+  if(!navigator.onLine){ flashAlert('warn','OFFLINE','Khâu xuất cần mạng. Vui lòng kết nối lại.'); return; }
+  var sk=cache.skus.filter(function(s){return String(s.sku_code)===sku;})[0];
+  if(!sk){ flashAlert('bad', nameOf('INVALID_QR'),'MÃ QR KHÔNG HỢP LỆ — sản phẩm không có trong hệ thống'); return; }      // #4
+  var row=d.table.filter(function(t){return String(t.sku_code)===sku;})[0];
+  if(!row){ flashAlert('bad', nameOf('WRONG_SKU'),'SAI SKU — không thuộc các đơn trong loading'); return; }                // #1
+  if(row.scanned>=row.ordered){ flashAlert('bad', nameOf('ENOUGH'),'ĐÃ ĐỦ SỐ LƯỢNG SKU NÀY ('+row.ordered+')'); return; }   // #2
+  var stock=(window._lmStock&&window._lmStock[sku]!=null)?window._lmStock[sku]:0;
+  if(stock<=0){ flashAlert('bad', nameOf('NO_STOCK'),'HẾT TỒN — SKU này chưa có hàng đóng gói'); return; }                  // #5/#3
+  var cand=(row.perSO||[]).filter(function(p){return p.scanned<p.ordered;}).sort(function(a,b){return String(a.delivery_date||'9999').localeCompare(String(b.delivery_date||'9999'));});
+  if(!cand.length){ flashAlert('bad', nameOf('ENOUGH'),'ĐÃ ĐỦ SỐ LƯỢNG'); return; }
+  var soNum=cand[0].so_number;
+  // ÁP DỤNG NGAY
+  row.scanned++; cand[0].scanned++; if(window._lmStock) window._lmStock[sku]=stock-1;
+  d.scanned_volume_m3=round3((+d.scanned_volume_m3||0)+(+row.volume_each||0));
+  d.fill_percent=d.capacity_m3?Math.round(d.scanned_volume_m3/(+d.capacity_m3)*100):0;
+  flashAlert('good','✓ OK',(sk.product_name||sku)+'\nSO '+soNum+' · '+row.scanned+'/'+row.ordered+' · '+d.fill_percent+'% xe', true);
+  renderLoading(d);
+  // ghi máy chủ ở nền
+  api('outboundScan',{loading_id:activeLoading, sku_code:sku, so_number:soNum}).then(function(res){
+    if(!res.valid){ rollbackOutbound(sku, soNum); flashAlert('bad', nameOf(res.code)||'TỪ CHỐI', res.message); }
+  }).catch(function(){ rollbackOutbound(sku, soNum); flashAlert('bad','MẤT KẾT NỐI','Chưa ghi được lượt quét — đã hoàn tác. Quét lại khi có mạng.'); });
+}
+function rollbackOutbound(sku, soNum){
+  var d=window._curD; if(!d) return;
+  var r=d.table.filter(function(t){return String(t.sku_code)===sku;})[0];
+  var ve=r?(+r.volume_each||0):0;
+  if(r){ r.scanned=Math.max(0,r.scanned-1); var p=(r.perSO||[]).filter(function(x){return String(x.so_number)===String(soNum);})[0]; if(p)p.scanned=Math.max(0,p.scanned-1); }
+  if(window._lmStock&&window._lmStock[sku]!=null) window._lmStock[sku]++;
+  d.scanned_volume_m3=round3((+d.scanned_volume_m3||0)-ve);
+  d.fill_percent=d.capacity_m3?Math.round(d.scanned_volume_m3/(+d.capacity_m3)*100):0;
+  if(currentView==='outbound') renderLoading(d);
 }
 async function completeLoading(){
   if(!confirm('Hoàn tất loading này? Sẽ cập nhật SO và tồn kho.'))return;
-  try{ var d=await api('completeLoading',{loading_id:activeLoading}); _ldMemo=null; flashAlert('good','✓ HOÀN TẤT','Đã xếp '+d.total_volume_m3+' m³', true); setTimeout(function(){go('outbound');},1000); }catch(e){ flashAlert('bad','LỖI', e.message); }
+  try{ var d=await api('completeLoading',{loading_id:activeLoading}); _ldMemo=null; _sosMemo=null; flashAlert('good','✓ HOÀN TẤT','Đã xếp '+d.total_volume_m3+' m³', true); setTimeout(function(){go('outbound');},1000); }catch(e){ flashAlert('bad','LỖI', e.message); }
 }
 
 /* ====================================================================
