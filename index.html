@@ -459,14 +459,14 @@ function printLabels(){
  * ==================================================================== */
 var activeLoading=null, _ldMemo=null;
 function viewOutbound(m){
-  var today=serverToday();
   m.innerHTML=
   '<div class="flex items-center justify-between mb-4"><div class="sectiontitle">Loading hôm nay</div>'+
     '<button class="btn btn-navy" onclick="openCreateLoading()">+ Tạo Loading</button></div>'+
   '<div id="loadingList" class="space-y-2.5"></div>';
   if(_ldMemo) paintLoadings(_ldMemo);   // hiện ngay danh sách lần trước -> không chờ
   else document.getElementById('loadingList').innerHTML='<div class="text-center text-slate-400 py-8">Đang tải…</div>';
-  api('getLoadings',{date:today}).then(function(r){ _ldMemo=r.items; if(currentView==='outbound') paintLoadings(r.items); })
+  // date rỗng -> máy chủ tự lọc theo ngày của nó (tránh lệch giờ trình duyệt)
+  api('getLoadings',{date:''}).then(function(r){ _ldMemo=r.items; if(currentView==='outbound') paintLoadings(r.items); })
     .catch(function(){ if(!_ldMemo && currentView==='outbound') document.getElementById('loadingList').innerHTML='<div class="card p-6 text-center text-slate-400">Không tải được — kiểm tra mạng.</div>'; });
 }
 function paintLoadings(lds){
