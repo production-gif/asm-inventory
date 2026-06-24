@@ -400,13 +400,20 @@ function printLabels(){
 /* ====================================================================
  * 3. XUẤT HÀNG / LOADING
  * ==================================================================== */
-var activeLoading=null;
-async function viewOutbound(m){
-  var today=new Date().toISOString().slice(0,10); var lds=[]; try{ lds=(await api('getLoadings',{date:today})).items; }catch(e){}
+var activeLoading=null, _ldMemo=null;
+function viewOutbound(m){
+  var today=new Date().toISOString().slice(0,10);
   m.innerHTML=
   '<div class="flex items-center justify-between mb-4"><div class="sectiontitle">Loading hôm nay</div>'+
-    '<button class="btn btn-navy" onclick="openCreateLoading()">+ Tạo Loading</button></div><div id="loadingList" class="space-y-2.5"></div>';
-  var list=document.getElementById('loadingList');
+    '<button class="btn btn-navy" onclick="openCreateLoading()">+ Tạo Loading</button></div>'+
+  '<div id="loadingList" class="space-y-2.5"></div>';
+  if(_ldMemo) paintLoadings(_ldMemo);   // hiện ngay danh sách lần trước -> không chờ
+  else document.getElementById('loadingList').innerHTML='<div class="text-center text-slate-400 py-8">Đang tải…</div>';
+  api('getLoadings',{date:today}).then(function(r){ _ldMemo=r.items; if(currentView==='outbound') paintLoadings(r.items); })
+    .catch(function(){ if(!_ldMemo && currentView==='outbound') document.getElementById('loadingList').innerHTML='<div class="card p-6 text-center text-slate-400">Không tải được — kiểm tra mạng.</div>'; });
+}
+function paintLoadings(lds){
+  var list=document.getElementById('loadingList'); if(!list) return; list.innerHTML='';
   if(!lds.length){ list.innerHTML='<div class="card p-8 text-center text-slate-400">Chưa có loading nào. Bấm “+ Tạo Loading”.</div>'; return; }
   lds.forEach(function(l){
     var pct=l.fill_percent||0, bc=pct>100?'var(--red)':(pct>90?'var(--amber)':'var(--green)');
@@ -497,17 +504,22 @@ async function completeLoading(){
 /* ====================================================================
  * 4. TỒN KHO
  * ==================================================================== */
-async function viewInventory(m){
-  try{ var inv=(await api('getInventory')).items; cache.inventory=inv; }catch(e){}
+function buildInvData(){
   var skuMap={}; cache.skus.forEach(function(s){skuMap[s.sku_code]=s;});
-  window._inv=cache.inventory.map(function(r){ var s=skuMap[r.sku_code]||{}; return {sku_code:r.sku_code,name:s.product_name||r.sku_code,size:s.size||'',line:s.line||'',in_stock:+r.qty_in_stock||0,shipped:+r.qty_shipped_total||0,created:+r.qty_created_total||0,vol:s.volume_m3||''};});
+  window._inv=(cache.inventory||[]).map(function(r){ var s=skuMap[r.sku_code]||{}; return {sku_code:r.sku_code,name:s.product_name||r.sku_code,size:s.size||'',line:s.line||'',in_stock:+r.qty_in_stock||0,shipped:+r.qty_shipped_total||0,created:+r.qty_created_total||0,vol:s.volume_m3||''};});
+}
+function viewInventory(m){
+  // 1) Vẽ NGAY từ cache (không chờ máy chủ) -> chuyển trang tức thì
+  buildInvData();
   var totalStock=window._inv.reduce(function(a,r){return a+r.in_stock;},0);
   m.innerHTML=
-  '<div class="grid grid-cols-3 gap-3 mb-4">'+kpi('Loại SKU',window._inv.length,'var(--navy)')+kpi('Tổng tồn',totalStock,'var(--amber)')+kpi('Sắp hết', window._inv.filter(function(r){return r.in_stock<(parseInt(cache.settings.reorder_threshold||"10",10));}).length,'var(--red)')+'</div>'+
+  '<div class="grid grid-cols-3 gap-3 mb-4" id="invKpi">'+kpi('Loại SKU',window._inv.length,'var(--navy)')+kpi('Tổng tồn',totalStock,'var(--amber)')+kpi('Sắp hết', window._inv.filter(function(r){return r.in_stock<(parseInt(cache.settings.reorder_threshold||"10",10));}).length,'var(--red)')+'</div>'+
   '<div class="flex flex-wrap gap-2 mb-3"><input id="invSearch" class="field" style="flex:1;min-width:180px" placeholder="🔍 Tìm SKU / sản phẩm..." oninput="renderInv()">'+
     '<button class="btn btn-ghost" onclick="exportCSV(window._inv,\'tonkho.csv\')">⬇ CSV</button></div>'+
   '<div class="card overflow-auto"><table><thead><tr><th onclick="sortInv(\'name\')">Sản phẩm</th><th>Size</th><th class="text-center" onclick="sortInv(\'in_stock\')">Tồn</th><th class="text-center" onclick="sortInv(\'shipped\')">Đã xuất</th><th class="text-center" onclick="sortInv(\'created\')">Đã tạo</th><th class="text-center">m³</th></tr></thead><tbody id="invBody"></tbody></table></div>';
   renderInv();
+  // 2) Làm mới nền: lấy tồn mới nhất rồi chỉ cập nhật bảng (không reset ô tìm kiếm)
+  api('getInventory').then(function(r){ cache.inventory=r.items; try{localStorage.setItem(CONFIG.cacheKey,JSON.stringify(cache));}catch(e){} if(currentView==='inventory'){ buildInvData(); renderInv(); } }).catch(function(){});
 }
 var _invSort={k:'name',dir:1};
 function sortInv(k){ _invSort.dir=(_invSort.k===k?-_invSort.dir:1); _invSort.k=k; renderInv(); }
@@ -561,8 +573,15 @@ async function loadReport(){
 /* ====================================================================
  * 6. DASHBOARD
  * ==================================================================== */
-async function viewDashboard(m){
-  var today=new Date().toISOString().slice(0,10); var d; try{ d=await api('reportDashboard',{date:today}); }catch(e){ m.innerHTML='<div class="card p-4">'+e.message+'</div>'; return; }
+var _dashMemo=null;
+function viewDashboard(m){
+  if(_dashMemo){ paintDashboard(m,_dashMemo); }   // hiện ngay số liệu lần trước
+  else m.innerHTML='<div class="text-center text-slate-400 py-12">Đang tải…</div>';
+  var today=new Date().toISOString().slice(0,10);
+  api('reportDashboard',{date:today}).then(function(d){ _dashMemo=d; if(currentView==='dashboard') paintDashboard(m,d); })
+    .catch(function(e){ if(!_dashMemo && currentView==='dashboard') m.innerHTML='<div class="card p-4">'+e.message+'</div>'; });
+}
+function paintDashboard(m,d){
   m.innerHTML=
   '<div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">'+
     kpi('Nhập hôm nay',d.kpi.in_today,'var(--navy)')+kpi('Xuất hôm nay',d.kpi.out_today,'var(--green)')+kpi('Tồn kho',d.kpi.total_stock,'var(--amber)')+kpi('SO đang xử lý',d.kpi.open_so,'var(--red)')+'</div>'+
@@ -677,14 +696,25 @@ async function refreshCache(){ var b=await api('getBootstrap'); cache.skus=b.sku
 /* ====================================================================
  * SCANNER
  * ==================================================================== */
-var html5qr=null, scanCb=null;
+var html5qr=null, scanCb=null, seenSinceAccept=true;
 function openScanner(title, cb){
-  scanCb=cb; document.getElementById('scanTitle').textContent=title; document.getElementById('scanWrap').style.display='flex';
-  html5qr=new Html5Qrcode('reader');
-  html5qr.start({facingMode:'environment'},{fps:10,qrbox:{width:250,height:250}},onDecode,function(){})
+  scanCb=cb; seenSinceAccept=true; lastScan={value:'',t:0};
+  document.getElementById('scanTitle').textContent=title; document.getElementById('scanWrap').style.display='flex';
+  // useBarCodeDetectorIfSupported = dùng bộ giải mã NATIVE của trình duyệt -> nhanh hơn nhiều trên Android/iOS
+  html5qr=new Html5Qrcode('reader', { experimentalFeatures:{ useBarCodeDetectorIfSupported:true } });
+  html5qr.start({facingMode:'environment'}, {fps:15, qrbox:{width:260,height:260}, aspectRatio:1.0}, onDecode, onScanFail)
     .catch(function(e){ flashAlert('bad','LỖI CAMERA',(e.message||'Không mở được camera')+'\nCần HTTPS và cấp quyền camera.'); stopScan(); });
 }
-function onDecode(text){ var now=Date.now(); if(text===lastScan.value&&(now-lastScan.t)<CONFIG.dbl)return; lastScan={value:text,t:now}; if(scanCb)scanCb(text); }
+/* CHỐNG NHẬN NHIỀU LẦN: mỗi lần đưa mã vào khung chỉ nhận ĐÚNG 1 lần.
+   Phải rút mã ra khỏi khung (onScanFail kích hoạt) thì mới nhận lần kế — kể cả cùng 1 mã QR
+   (phù hợp SKU-level: quét nhiều tấm cùng loại, mỗi tấm 1 lần). */
+function onDecode(text){
+  if(!seenSinceAccept) return;                         // mã vẫn còn trong khung -> bỏ qua
+  var now=Date.now(); if(text===lastScan.value && (now-lastScan.t)<800) return; // chặn rung khung
+  lastScan={value:text,t:now}; seenSinceAccept=false;
+  if(scanCb) scanCb(text);
+}
+function onScanFail(){ seenSinceAccept=true; }          // không thấy mã -> sẵn sàng nhận mã kế tiếp
 function stopScan(){ if(html5qr){ html5qr.stop().then(function(){html5qr.clear();}).catch(function(){}); html5qr=null; } document.getElementById('scanWrap').style.display='none'; }
 
 /* ====================================================================
