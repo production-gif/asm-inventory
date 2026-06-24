@@ -228,7 +228,9 @@ var NAV = {
   report:{label:'Báo cáo ngày',icon:'📈',group:'BÁO CÁO',sub:'Đóng gói & xuất hàng'},
   admin:{label:'Quản trị',icon:'⚙️',group:'HỆ THỐNG',sub:'SKU · User · Xe · Import'}
 };
-var session=null, cache={skus:[],inventory:[],vehicles:[],settings:{}}, currentView=null, lastScan={value:'',t:0};
+var session=null, cache={skus:[],inventory:[],vehicles:[],settings:{},server_date:''}, currentView=null, lastScan={value:'',t:0};
+// Ngày theo MÚI GIỜ MÁY CHỦ (để báo cáo/loadings khớp với timestamp đã lưu)
+function serverToday(){ return cache.server_date || new Date().toISOString().slice(0,10); }
 
 /* logo: dùng logo.png nếu tải được, ngược lại dùng vector */
 function logoHTML(){ return document.getElementById('logoTpl').innerHTML; }
@@ -304,7 +306,7 @@ async function enterApp(){
   document.getElementById('sbRole').textContent=ROLES[session.role].label;
   document.getElementById('avatar').textContent=(session.username[0]||'?').toUpperCase();
   buildSidebar();
-  try{ var b=await api('getBootstrap'); cache.skus=b.skus||[]; cache.inventory=b.inventory||[]; cache.vehicles=b.vehicles||[];
+  try{ var b=await api('getBootstrap'); cache.skus=b.skus||[]; cache.inventory=b.inventory||[]; cache.vehicles=b.vehicles||[]; cache.server_date=b.server_date||'';
        cache.settings={}; (b.settings||[]).forEach(function(s){cache.settings[s.key]=s.value;}); localStorage.setItem(CONFIG.cacheKey,JSON.stringify(cache)); }
   catch(e){ var c=localStorage.getItem(CONFIG.cacheKey); if(c) cache=JSON.parse(c); }
   flushQueue(); go(ROLES[session.role].home);
@@ -333,7 +335,7 @@ function go(view){
 /* ====================================================================
  * 2. ĐÓNG GÓI (INBOUND)
  * ==================================================================== */
-function todayCountKey(){ return 'as_packcount_'+session.username+'_'+new Date().toISOString().slice(0,10); }
+function todayCountKey(){ return 'as_packcount_'+session.username+'_'+serverToday(); }
 function viewInbound(m){
   var cnt=parseInt(localStorage.getItem(todayCountKey())||'0',10);
   m.innerHTML=
@@ -350,31 +352,72 @@ function renderRecentIn(){
   document.getElementById('recentIn').innerHTML=r.length? r.map(function(x){return '<div>✓ <span class="text-slate-400">'+x.t+'</span> — '+x.sku+'</div>';}).join('') : '<span class="text-slate-400">Chưa có</span>';
 }
 function startInboundScan(){ openScanner('Quét QR — Nhập kho', handleInbound); }
-async function handleInbound(code){
+/* QUÉT NHẬP TỨC THÌ: kiểm tra SKU bằng danh mục đã cache (ngay lập tức),
+   phản hồi xanh/đỏ liền, rồi GỬI máy chủ ở chế độ nền (không bắt người dùng chờ). */
+function handleInbound(code){
   var sku=code.trim();
-  if(!navigator.onLine){ queuePush({action:'inboundScan',payload:{sku_code:sku}}); bumpInbound(sku); flashAlert('good','ĐÃ GHI (offline)', sku+'\nSẽ đồng bộ khi có mạng', true); return; }
-  try{ var d=await api('inboundScan',{sku_code:sku});
-    if(d.valid){ bumpInbound(sku); flashAlert('good','✓ ĐÃ NHẬP KHO',(d.sku.product_name||sku)+'\nTồn hiện tại: '+d.qty_in_stock, true); }
+  var sk=cache.skus.filter(function(s){return String(s.sku_code)===sku;})[0];
+  if(sk){
+    if(String(sk.active)==='false'){ flashAlert('bad','SKU BỊ VÔ HIỆU','SKU đã bị vô hiệu hóa'); return; }
+    bumpInbound(sku);                                   // tăng bộ đếm ngay
+    flashAlert('good','✓ ĐÃ NHẬP KHO',(sk.product_name||sku), true);
+    sendInbound(sku);                                   // ghi máy chủ ở nền
+    return;
+  }
+  // SKU lạ (chưa có trong cache, ví dụ vừa thêm) -> hỏi máy chủ
+  if(!navigator.onLine){ flashAlert('bad','MÃ QR KHÔNG HỢP LỆ', sku+'\nKhông có trong danh mục (offline)'); return; }
+  api('inboundScan',{sku_code:sku}).then(function(d){
+    if(d.valid){ bumpInbound(sku); flashAlert('good','✓ ĐÃ NHẬP KHO',(d.sku.product_name||sku)+'\nTồn: '+d.qty_in_stock, true); }
     else flashAlert('bad', nameOf(d.code), d.message);
-  }catch(e){ flashAlert('bad','LỖI', e.message); }
+  }).catch(function(e){ flashAlert('bad','LỖI', e.message); });
+}
+function sendInbound(sku){
+  if(!navigator.onLine){ queuePush({action:'inboundScan',payload:{sku_code:sku}}); return; }
+  api('inboundScan',{sku_code:sku}).catch(function(){ queuePush({action:'inboundScan',payload:{sku_code:sku}}); }); // lỗi -> đưa vào hàng đợi
 }
 function bumpInbound(sku){
   var k=todayCountKey(); localStorage.setItem(k,(parseInt(localStorage.getItem(k)||'0',10)+1));
   var r=JSON.parse(localStorage.getItem('as_recent_in')||'[]'); r.unshift({t:new Date().toTimeString().slice(0,8),sku:sku}); localStorage.setItem('as_recent_in',JSON.stringify(r.slice(0,20)));
   if(currentView==='inbound') viewInbound(document.getElementById('main'));
 }
+/* ---- Mẫu tem (designer): chọn trường hiển thị, lưu vào localStorage ---- */
+var LBL_DEFAULT={showCompany:false,showName:true,showSizeThick:true,showSku:true,showDate:true,custom:''};
+function labelTpl(){ try{ return Object.assign({},LBL_DEFAULT,JSON.parse(localStorage.getItem('as_label_tpl')||'{}')); }catch(e){ return Object.assign({},LBL_DEFAULT); } }
+function saveLabelTpl(){
+  localStorage.setItem('as_label_tpl', JSON.stringify({
+    showCompany:document.getElementById('lt_co').checked, showName:document.getElementById('lt_name').checked,
+    showSizeThick:document.getElementById('lt_size').checked, showSku:document.getElementById('lt_sku').checked,
+    showDate:document.getElementById('lt_date').checked, custom:document.getElementById('lt_custom').value }));
+  previewQR();
+}
+function labelMetaHTML(s,sku,date){
+  var t=labelTpl(), L=[];
+  if(t.showCompany) L.push('<b style="color:#0E2148">'+(cache.settings.company_name||'AMERICAN STAR')+'</b>');
+  if(t.showName) L.push('<b>'+(s.product_name||sku)+'</b>');
+  if(t.showSizeThick){ var sz=((s.size||'')+(s.thickness?(' · '+s.thickness):'')).trim(); if(sz)L.push(sz); }
+  if(t.showSku) L.push(sku);
+  if(t.showDate) L.push('ĐG: '+date);
+  if(t.custom) L.push(t.custom);
+  return L.join('<br>');
+}
 function openCreateLabel(){
-  var m=document.getElementById('main'); var size=cache.settings.label_size||'50x30';
+  var m=document.getElementById('main'); var size=cache.settings.label_size||'50x30'; var t=labelTpl();
+  function ck(id,lbl,on){ return '<label class="flex items-center gap-2 text-sm py-1"><input type="checkbox" id="'+id+'" '+(on?'checked':'')+' onchange="saveLabelTpl()" style="width:18px;height:18px;accent-color:var(--navy)">'+lbl+'</label>'; }
   m.innerHTML=
   '<button class="btn btn-ghost mb-4" onclick="go(\'inbound\')">← Quay lại</button>'+
-  '<div class="card p-5"><div class="sectiontitle mb-3">In tem QR</div>'+
+  '<div class="card p-5 mb-3"><div class="sectiontitle mb-3">In tem QR</div>'+
     '<input id="skuSearch" class="field mb-2" placeholder="🔍 Tìm SKU..." oninput="filterSkuOptions()">'+
     '<select id="skuSelect" class="field mb-3" size="6" style="height:auto"></select>'+
-    '<div class="grid grid-cols-2 gap-3 mb-3">'+
+    '<div class="grid grid-cols-2 gap-3">'+
       '<div><label class="text-sm text-slate-500">Số lượng tem</label><input id="lblQty" type="number" value="1" min="1" class="field"></div>'+
-      '<div><label class="text-sm text-slate-500">Khổ tem</label><select id="lblSize" class="field"><option value="50x30"'+(size==='50x30'?' selected':'')+'>50×30 mm</option><option value="80x50"'+(size==='80x50'?' selected':'')+'>80×50 mm</option></select></div></div>'+
-    '<div id="qrPreview" class="flex justify-center my-4 p-4 rounded-2xl" style="background:#F8FAFC"></div>'+
-    '<button class="btn btn-navy w-full" onclick="printLabels()">🖨️ IN TEM</button></div>';
+      '<div><label class="text-sm text-slate-500">Khổ tem</label><select id="lblSize" class="field" onchange="previewQR()"><option value="50x30"'+(size==='50x30'?' selected':'')+'>50×30 mm</option><option value="80x50"'+(size==='80x50'?' selected':'')+'>80×50 mm</option></select></div></div></div>'+
+  '<div class="card p-5 mb-3"><div class="font-semibold mb-3 text-slate-700">🎨 Thiết kế mẫu tem</div>'+
+    '<div class="grid grid-cols-2 gap-1 mb-3">'+ck('lt_co','Tên công ty',t.showCompany)+ck('lt_name','Tên sản phẩm',t.showName)+ck('lt_size','Size / độ dày',t.showSizeThick)+ck('lt_sku','Mã SKU',t.showSku)+ck('lt_date','Ngày đóng gói',t.showDate)+'</div>'+
+    '<label class="text-sm text-slate-500">Dòng chữ thêm (tùy chọn)</label>'+
+    '<input id="lt_custom" class="field" value="'+(t.custom||'').replace(/"/g,'&quot;')+'" oninput="saveLabelTpl()" placeholder="VD: Made in USA / Hotline 1900..."></div>'+
+  '<div class="card p-5"><div class="font-semibold mb-3 text-slate-700">Xem trước tem (đúng như khi in)</div>'+
+    '<div id="qrPreview" class="flex justify-center my-2 p-4 rounded-2xl" style="background:#F1F5F9"></div>'+
+    '<button class="btn btn-navy w-full mt-3" onclick="printLabels()">🖨️ IN TEM</button></div>';
   filterSkuOptions(); document.getElementById('skuSelect').onchange=previewQR;
 }
 function filterSkuOptions(){
@@ -383,16 +426,26 @@ function filterSkuOptions(){
     .forEach(function(s){ var o=document.createElement('option'); o.value=s.sku_code; o.textContent=s.sku_code; sel.appendChild(o); });
   if(sel.options.length){ sel.selectedIndex=0; previewQR(); } else document.getElementById('qrPreview').innerHTML='<span class="text-slate-400 text-sm">Không có SKU</span>';
 }
-function previewQR(){ var box=document.getElementById('qrPreview'); box.innerHTML=''; var v=document.getElementById('skuSelect').value; if(!v)return; var d=document.createElement('div'); box.appendChild(d); new QRCode(d,{text:(cache.settings.qr_prefix||'')+v,width:150,height:150,correctLevel:QRCode.CorrectLevel.M}); }
+function previewQR(){
+  var box=document.getElementById('qrPreview'); if(!box) return; box.innerHTML='';
+  var v=document.getElementById('skuSelect').value; if(!v){ box.innerHTML='<span class="text-slate-400 text-sm">Chọn SKU để xem trước</span>'; return; }
+  var size=(document.getElementById('lblSize')||{}).value||'50x30';
+  var s=cache.skus.filter(function(x){return x.sku_code===v;})[0]||{product_name:v};
+  var wrap=document.createElement('div'); wrap.className='label s'+size.replace('x',''); wrap.style.background='#fff'; wrap.style.boxShadow='0 3px 10px rgba(0,0,0,.18)';
+  var qb=document.createElement('div'); qb.className='qrbox'; wrap.appendChild(qb);
+  new QRCode(qb,{text:(cache.settings.qr_prefix||'')+v,width:200,height:200,correctLevel:QRCode.CorrectLevel.M});
+  var meta=document.createElement('div'); meta.className='meta'; meta.innerHTML=labelMetaHTML(s,v,serverToday()); wrap.appendChild(meta);
+  box.appendChild(wrap);
+}
 function printLabels(){
   var sku=document.getElementById('skuSelect').value; if(!sku){alert('Chọn SKU');return;}
   var qty=Math.max(1,parseInt(document.getElementById('lblQty').value||'1',10)), size=document.getElementById('lblSize').value;
   var s=cache.skus.filter(function(x){return x.sku_code===sku;})[0]||{product_name:sku};
-  var area=document.getElementById('printArea'); area.innerHTML=''; var date=new Date().toISOString().slice(0,10);
+  var area=document.getElementById('printArea'); area.innerHTML=''; var date=serverToday();
   for(var i=0;i<qty;i++){ var wrap=document.createElement('div'); wrap.className='label s'+size.replace('x','');
     var qb=document.createElement('div'); qb.className='qrbox'; wrap.appendChild(qb);
     new QRCode(qb,{text:(cache.settings.qr_prefix||'')+sku,width:300,height:300,correctLevel:QRCode.CorrectLevel.M});
-    var meta=document.createElement('div'); meta.className='meta'; meta.innerHTML='<b>'+(s.product_name||sku)+'</b><br>'+(s.size||'')+(s.thickness?(' · '+s.thickness):'')+'<br>'+sku+'<br>ĐG: '+date;
+    var meta=document.createElement('div'); meta.className='meta'; meta.innerHTML=labelMetaHTML(s,sku,date);
     wrap.appendChild(meta); area.appendChild(wrap); }
   window.print();
 }
@@ -402,7 +455,7 @@ function printLabels(){
  * ==================================================================== */
 var activeLoading=null, _ldMemo=null;
 function viewOutbound(m){
-  var today=new Date().toISOString().slice(0,10);
+  var today=serverToday();
   m.innerHTML=
   '<div class="flex items-center justify-between mb-4"><div class="sectiontitle">Loading hôm nay</div>'+
     '<button class="btn btn-navy" onclick="openCreateLoading()">+ Tạo Loading</button></div>'+
@@ -426,20 +479,33 @@ function paintLoadings(lds){
     list.appendChild(d);
   });
 }
-async function openCreateLoading(){
-  var m=document.getElementById('main'); var sos=[]; try{ sos=(await api('getOpenSOs')).items; }catch(e){ alert(e.message); }
-  var vehOpts=cache.vehicles.filter(function(v){return String(v.active)!=='false';}).map(function(v){return '<option value="'+v.vehicle_id+'">'+v.vehicle_name+' ('+v.capacity_m3+' m³)</option>';}).join('');
+async function openCreateLoading(pre){
+  pre=pre||null; var m=document.getElementById('main'); var sos=[]; try{ sos=(await api('getOpenSOs')).items; }catch(e){ alert(e.message); }
+  // khi SỬA: đảm bảo các SO đang nằm trong loading vẫn hiện ra dù trạng thái đã đổi
+  if(pre && pre.so_list){ pre.so_list.forEach(function(sn){ if(!sos.some(function(s){return String(s.so_number)===String(sn);})) sos.push({so_number:sn,customer:'(đang trong loading)',delivery_date:'',qty_ordered:0,lines:0}); }); }
+  var preVeh=pre?pre.vehicle_id:'';
+  var vehOpts=cache.vehicles.filter(function(v){return String(v.active)!=='false';}).map(function(v){return '<option value="'+v.vehicle_id+'"'+(String(preVeh)===String(v.vehicle_id)?' selected':'')+'>'+v.vehicle_name+' ('+v.capacity_m3+' m³)</option>';}).join('');
   m.innerHTML=
-  '<button class="btn btn-ghost mb-4" onclick="go(\'outbound\')">← Quay lại</button>'+
+  '<button class="btn btn-ghost mb-4" onclick="'+(pre?'openLoading(\''+pre.loading_id+'\')':'go(\'outbound\')')+'">← Quay lại</button>'+
+  '<div class="sectiontitle mb-3">'+(pre?'Sửa '+pre.loading_id:'Tạo Loading mới')+'</div>'+
   '<div class="card p-5 mb-3"><div class="font-semibold mb-2 text-slate-700">1 · Chọn xe</div>'+
     '<select id="ldVehicle" class="field" onchange="recalcEst()">'+(vehOpts||'<option value="">— chưa có xe, thêm ở Quản trị —</option>')+'</select>'+
     '<div id="estVol" class="text-sm text-slate-500 mt-2"></div></div>'+
-  '<div class="card p-5"><div class="font-semibold mb-2 text-slate-700">2 · Chọn SO để xếp ('+sos.length+' đơn cần xuất)</div>'+
+  '<div class="card p-5"><div class="font-semibold mb-2 text-slate-700">2 · Chọn SO để xếp ('+sos.length+' đơn)</div>'+
     '<input class="field mb-2" placeholder="🔍 Lọc SO / khách..." oninput="filterSO(this.value)">'+
-    '<div id="soPick" style="max-height:44vh;overflow:auto;margin:0 -6px"></div></div>'+
-  '<button class="btn btn-green w-full mt-3" onclick="submitLoading()">TẠO LOADING</button>';
+    '<div id="soPick" style="max-height:42vh;overflow:auto;margin:0 -6px"></div></div>'+
+  '<button class="btn btn-green w-full mt-3" onclick="'+(pre?'updateLoadingSave(\''+pre.loading_id+'\')':'submitLoading()')+'">💾 '+(pre?'LƯU THAY ĐỔI':'LƯU LOADING')+'</button>';
   window._openSOs=sos; renderSOpick(sos);
+  if(pre && pre.so_list){ [].forEach.call(document.querySelectorAll('.soChk'),function(cb){ if(pre.so_list.indexOf(cb.value)>=0) cb.checked=true; }); }
+  recalcEst();
 }
+async function updateLoadingSave(id){
+  var sel=selectedSOs(); if(!sel.length){ alert('Chọn ít nhất 1 SO'); return; }
+  try{ await api('updateLoading',{loading_id:id, vehicle_id:document.getElementById('ldVehicle').value, so_list:sel}); _ldMemo=null; openLoading(id); }catch(e){ alert(e.message); }
+}
+function editLoading(){ var ld=window._curLoading; if(!ld)return; openCreateLoading({loading_id:ld.loading_id, vehicle_id:ld.vehicle_id, so_list:String(ld.so_list).split(',').filter(String)}); }
+async function deleteLoadingNow(){ var ld=window._curLoading; if(!ld)return; if(!confirm('Xóa loading '+ld.loading_id+'?\nTồn kho sẽ được hoàn lại cho các lượt đã quét trong loading này.'))return;
+  try{ await api('deleteLoading',{loading_id:ld.loading_id}); _ldMemo=null; flashAlert('good','✓ ĐÃ XÓA',ld.loading_id, true); setTimeout(function(){go('outbound');},900); }catch(e){ alert(e.message); } }
 function renderSOpick(list){
   var c=document.getElementById('soPick'); c.innerHTML='';
   if(!list.length){ c.innerHTML='<div class="text-slate-400 text-center py-6">Không có SO cần xuất</div>'; return; }
@@ -462,7 +528,7 @@ function recalcEst(){
 }
 async function submitLoading(){
   var sel=selectedSOs(); if(!sel.length){alert('Chọn ít nhất 1 SO');return;}
-  try{ var d=await api('createLoading',{vehicle_id:document.getElementById('ldVehicle').value,so_list:sel}); openLoading(d.loading_id); }catch(e){ alert(e.message); }
+  try{ var d=await api('createLoading',{vehicle_id:document.getElementById('ldVehicle').value,so_list:sel}); _ldMemo=null; openLoading(d.loading_id); }catch(e){ alert(e.message); }
 }
 async function openLoading(id){
   activeLoading=id; var m=document.getElementById('main'); m.innerHTML='<div class="text-center text-slate-400 py-12">Đang tải loading…</div>';
@@ -470,9 +536,13 @@ async function openLoading(id){
 }
 function renderLoading(d){
   var m=document.getElementById('main'), ld=d.loading, pct=d.fill_percent||0, bc=pct>100?'var(--red)':(pct>90?'var(--amber)':'var(--green)');
-  var rows=d.table.map(function(t){ var done=t.scanned>=t.ordered;
+  window._curLoading=ld;
+  var totLineVol=0;
+  var rows=d.table.map(function(t){ var done=t.scanned>=t.ordered; var ve=+t.volume_each||0; var lineVol=ve*t.ordered; totLineVol+=lineVol;
     return '<tr><td>'+t.product_name+'<div class="text-xs text-slate-400">'+t.sku_code+'</div></td>'+
       '<td class="text-center"><b style="color:'+(done?'var(--green)':'var(--navy)')+';font-size:16px">'+t.scanned+'/'+t.ordered+'</b></td>'+
+      '<td class="text-center text-slate-600">'+(ve?ve.toFixed(3):'-')+'</td>'+
+      '<td class="text-center font-semibold" style="color:var(--navy)">'+(lineVol?lineVol.toFixed(3):'-')+'</td>'+
       '<td class="text-center">'+(done?'<span style="color:var(--green)">✓</span>':'')+'</td></tr>'; }).join('');
   var allDone=d.table.length>0 && d.table.every(function(t){return t.scanned>=t.ordered;});
   m.innerHTML=
@@ -481,9 +551,12 @@ function renderLoading(d){
     '<div class="mt-3 text-sm text-slate-600">Thể tích đã xếp: <b style="color:var(--navy)">'+d.scanned_volume_m3+' m³</b> / '+d.capacity_m3+' m³ <span class="text-slate-400">(ước tính đơn '+d.estimate_volume_m3+' m³)</span></div>'+
     '<div style="background:#eef2f7;border-radius:999px;height:16px;margin-top:8px;overflow:hidden"><div style="height:100%;width:'+Math.min(pct,100)+'%;background:'+bc+';transition:.3s"></div></div>'+
     '<div class="text-right text-sm font-bold mt-1" style="color:'+bc+'">'+pct+'%'+(pct>100?' — QUÁ TẢI!':'')+'</div></div>'+
+  (ld.status!=='done'?'<div class="flex gap-2 mb-3"><button class="btn btn-ghost flex-1" onclick="editLoading()">✏ Sửa SO/Xe</button><button class="btn btn-red flex-1" onclick="deleteLoadingNow()">🗑 Xóa</button></div>':'')+
   (ld.status==='done'?'<div class="card p-3 mb-3 text-center font-semibold" style="background:#dcfce7;color:#166534">✓ Loading đã hoàn tất</div>':
    '<button class="btn btn-navy btn-lg mb-3" onclick="startOutboundScan()">📷 QUÉT XUẤT HÀNG</button>')+
-  '<div class="card overflow-hidden mb-3"><table><thead><tr><th>Sản phẩm</th><th class="text-center">Quét/Cần</th><th class="text-center">Đủ</th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
+  '<div class="card overflow-auto mb-3"><table><thead><tr><th>Sản phẩm</th><th class="text-center">Quét/Cần</th><th class="text-center">m³/cái</th><th class="text-center">m³ line</th><th class="text-center">Đủ</th></tr></thead><tbody>'+rows+
+    '<tr style="background:#F8FAFC"><td class="font-bold">Tổng thể tích (theo đơn)</td><td></td><td></td><td class="text-center font-bold" style="color:var(--navy)">'+totLineVol.toFixed(3)+'</td><td></td></tr>'+
+    '</tbody></table></div>'+
   (ld.status!=='done'?'<button class="btn '+(allDone?'btn-green':'btn-ghost')+' w-full" onclick="completeLoading()">'+(allDone?'✓ HOÀN TẤT LOADING':'Hoàn tất (chưa đủ số lượng)')+'</button>':'');
 }
 function startOutboundScan(){ openScanner('Quét xuất — '+activeLoading, handleOutbound); }
@@ -498,7 +571,7 @@ async function handleOutbound(code){
 }
 async function completeLoading(){
   if(!confirm('Hoàn tất loading này? Sẽ cập nhật SO và tồn kho.'))return;
-  try{ var d=await api('completeLoading',{loading_id:activeLoading}); flashAlert('good','✓ HOÀN TẤT','Đã xếp '+d.total_volume_m3+' m³', true); setTimeout(function(){go('outbound');},1000); }catch(e){ flashAlert('bad','LỖI', e.message); }
+  try{ var d=await api('completeLoading',{loading_id:activeLoading}); _ldMemo=null; flashAlert('good','✓ HOÀN TẤT','Đã xếp '+d.total_volume_m3+' m³', true); setTimeout(function(){go('outbound');},1000); }catch(e){ flashAlert('bad','LỖI', e.message); }
 }
 
 /* ====================================================================
@@ -540,7 +613,7 @@ function renderInv(){
  * ==================================================================== */
 var _chart={}, _repCur='A';
 function viewReport(m){
-  var today=new Date().toISOString().slice(0,10);
+  var today=serverToday();
   m.innerHTML=
   '<div class="flex flex-wrap items-center gap-2 mb-4"><input type="date" id="repDate" value="'+today+'" class="field" style="max-width:185px" onchange="loadReport()">'+
     '<div class="flex gap-1.5"><button class="btn btn-navy" id="tabA" onclick="repTab(\'A\')">Đóng gói</button><button class="btn btn-ghost" id="tabB" onclick="repTab(\'B\')">Xuất hàng</button></div></div><div id="repBody"></div>';
@@ -577,7 +650,7 @@ var _dashMemo=null;
 function viewDashboard(m){
   if(_dashMemo){ paintDashboard(m,_dashMemo); }   // hiện ngay số liệu lần trước
   else m.innerHTML='<div class="text-center text-slate-400 py-12">Đang tải…</div>';
-  var today=new Date().toISOString().slice(0,10);
+  var today=serverToday();
   api('reportDashboard',{date:today}).then(function(d){ _dashMemo=d; if(currentView==='dashboard') paintDashboard(m,d); })
     .catch(function(e){ if(!_dashMemo && currentView==='dashboard') m.innerHTML='<div class="card p-4">'+e.message+'</div>'; });
 }
@@ -691,7 +764,7 @@ function adminSettings(){ var s=cache.settings;
     '<button class="btn btn-navy w-full" onclick="saveSettings()">Lưu cài đặt</button><div id="setMsg" class="text-center text-sm mt-2"></div></div>';
 }
 async function saveSettings(){ try{ await api('saveSettings',{values:{reorder_threshold:document.getElementById('set_thr').value,label_size:document.getElementById('set_lbl').value,qr_prefix:document.getElementById('set_pre').value}}); await refreshCache(); var msg=document.getElementById('setMsg'); msg.style.color='var(--green)'; msg.textContent='Đã lưu ✓'; }catch(e){ document.getElementById('setMsg').textContent=e.message; } }
-async function refreshCache(){ var b=await api('getBootstrap'); cache.skus=b.skus||[]; cache.inventory=b.inventory||[]; cache.vehicles=b.vehicles||[]; cache.settings={}; (b.settings||[]).forEach(function(s){cache.settings[s.key]=s.value;}); localStorage.setItem(CONFIG.cacheKey,JSON.stringify(cache)); }
+async function refreshCache(){ var b=await api('getBootstrap'); cache.skus=b.skus||[]; cache.inventory=b.inventory||[]; cache.vehicles=b.vehicles||[]; cache.server_date=b.server_date||cache.server_date; cache.settings={}; (b.settings||[]).forEach(function(s){cache.settings[s.key]=s.value;}); localStorage.setItem(CONFIG.cacheKey,JSON.stringify(cache)); }
 
 /* ====================================================================
  * SCANNER
