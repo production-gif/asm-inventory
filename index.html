@@ -515,13 +515,33 @@ async function api(action, p){
       return {added_so:soArr.length,added_lines:soL.length,added_sku:newSk.length,total_so:soArr.length};
     }
     case 'getOrders': {
-      var rows=chk(await sb.from('sales_orders').select('so_number,customer,status,delivery_date,total_amount').order('so_number',{ascending:false}))||[];
+      var rows=chk(await sb.from('sales_orders').select('so_number,customer,status,state,sales_person,so_class,location_group,so_date,delivery_date,total_amount').order('so_number',{ascending:false}))||[];
       return {items:rows};
     }
     case 'getOrderLines': {
       var lines=chk(await sb.from('so_lines').select('*').eq('so_number',p.so_number))||[];
       var hdr=(chk(await sb.from('sales_orders').select('*').eq('so_number',p.so_number))||[])[0]||{};
       return {header:hdr, lines:lines};
+    }
+    case 'deleteOrders': {
+      var list=p.so_numbers||[]; if(!list.length) return {deleted:0};
+      for(var di=0;di<list.length;di+=100){ var sl=list.slice(di,di+100); chk(await sb.from('so_lines').delete().in('so_number',sl)); chk(await sb.from('sales_orders').delete().in('so_number',sl)); }
+      await audit(session.username,'delete_orders',list.length+' SO'); return {deleted:list.length};
+    }
+    case 'deleteLoadings': {
+      var lids=p.loading_ids||[]; var done=0,err=[];
+      for(var li=0;li<lids.length;li++){ try{ await api('deleteLoading',{loading_id:lids[li]}); done++; }catch(e){ err.push(lids[li]+': '+e.message); } }
+      return {deleted:done, errors:err};
+    }
+    case 'setOutboundQty': {
+      var lid3=String(p.loading_id), sku4=String(p.sku_code).trim(); var target=parseInt(p.target,10); if(isNaN(target)||target<0)target=0;
+      var det=await api('getLoading',{loading_id:lid3}); var row=det.table.filter(function(t){return String(t.sku_code)===sku4;})[0];
+      if(!row) throw new Error('SKU không thuộc loading này'); if(target>row.ordered) target=row.ordered;
+      var cur=row.scanned;
+      if(target>cur){ var add=target-cur; for(var ai=0;ai<add;ai++){ var r=await api('outboundScan',{loading_id:lid3,sku_code:sku4}); if(!r.valid) throw new Error(r.message||'Không thêm được'); } }
+      else if(target<cur){ var oks=chk(await sb.from('outbound_scans').select('*').eq('loading_id',lid3).eq('sku_code',sku4).eq('validation_status','OK').order('ts',{ascending:false}).limit(cur-target))||[];
+        for(var ki=0;ki<oks.length;ki++){ chk(await sb.from('outbound_scans').delete().eq('scan_id',oks[ki].scan_id)); await adjustInventory(sku4,+(oks[ki].qty||1),-(oks[ki].qty||1),0); } }
+      await audit(session.username,'set_outbound_qty',sku4+' -> '+target); return {ok:true,target:target};
     }
 
     case 'reportInbound': {
@@ -782,14 +802,16 @@ function printLabels(){
 var activeLoading=null, _ldMemo=null, _ldAll=[];
 function viewOutbound(m){
   m.innerHTML=
-  '<div class="flex flex-wrap items-center justify-between gap-2 mb-4"><div class="sectiontitle">Danh sách Loading</div>'+
-    '<div class="flex gap-2 items-center">'+
-      '<select id="ldFilter" class="field" style="min-width:160px;min-height:46px" onchange="renderLdFilter()"><option value="ALL">Tất cả ngày</option></select>'+
-      '<button class="btn btn-navy" onclick="openCreateLoading()">+ Tạo Loading</button></div></div>'+
+  '<div class="flex flex-wrap items-center justify-between gap-2 mb-3"><div class="sectiontitle">Danh sách Loading</div>'+
+    '<button class="btn btn-navy" onclick="openCreateLoading()">+ Tạo Loading</button></div>'+
+  '<div class="flex flex-wrap gap-2 mb-3">'+
+    '<input id="ldSearch" class="field" style="flex:1;min-width:170px" placeholder="🔍 Tìm loading / SO / xe..." oninput="renderLdFilter()">'+
+    '<select id="ldFilter" class="field" style="min-width:150px" onchange="renderLdFilter()"><option value="ALL">Tất cả ngày</option></select>'+
+    '<button class="btn btn-ghost" onclick="toggleAllLd(this)">Chọn tất cả</button>'+
+    '<button class="btn btn-red" onclick="deleteSelectedLoadings()">🗑 Xóa chọn</button></div>'+
   '<div id="loadingList" class="space-y-2.5"></div>';
   if(_ldMemo&&_ldMemo.length){ _ldAll=_ldMemo; buildLdFilter(); renderLdFilter(); }
   else document.getElementById('loadingList').innerHTML='<div class="text-center text-slate-400 py-8">Đang tải…</div>';
-  // lấy TẤT CẢ loading, lọc theo ngày ở phía app (tránh lệch múi giờ)
   api('getLoadings',{date:'ALL'}).then(function(r){ _ldMemo=r.items; _ldAll=r.items; if(currentView==='outbound'){ buildLdFilter(); renderLdFilter(); } })
     .catch(function(){ if(!_ldAll.length && currentView==='outbound') document.getElementById('loadingList').innerHTML='<div class="card p-6 text-center text-slate-400">Không tải được — kiểm tra mạng.</div>'; });
 }
@@ -801,22 +823,37 @@ function buildLdFilter(){
   sel.value = (cur==='ALL'||dates.indexOf(cur)>=0)? cur : 'ALL';
 }
 function renderLdFilter(){
-  var sel=document.getElementById('ldFilter'); var f=sel?sel.value:'ALL';
-  paintLoadings(f==='ALL'? _ldAll : _ldAll.filter(function(l){return String(l.loading_date)===f;}));
+  var f=(document.getElementById('ldFilter')||{}).value||'ALL';
+  var q=((document.getElementById('ldSearch')||{}).value||'').toLowerCase();
+  paintLoadings(_ldAll.filter(function(l){ if(f!=='ALL' && String(l.loading_date)!==f) return false; if(q && (l.loading_id+' '+(l.so_list||'')+' '+(l.vehicle_id||'')).toLowerCase().indexOf(q)<0) return false; return true; }));
 }
 function paintLoadings(lds){
   var list=document.getElementById('loadingList'); if(!list) return; list.innerHTML='';
-  if(!lds.length){ list.innerHTML='<div class="card p-8 text-center text-slate-400">Chưa có loading nào. Bấm “+ Tạo Loading”.</div>'; return; }
+  if(!lds.length){ list.innerHTML='<div class="card p-8 text-center text-slate-400">Không có loading phù hợp.</div>'; return; }
   lds.forEach(function(l){
     var pct=l.fill_percent||0, bc=pct>100?'var(--red)':(pct>90?'var(--amber)':'var(--green)');
     var st=l.status==='done'?'<span class="pill" style="background:#dcfce7;color:#166534">Hoàn tất</span>':'<span class="pill" style="background:#dbeafe;color:#1e40af">Đang xếp</span>';
-    var d=document.createElement('div'); d.className='card p-4 cursor-pointer'; d.onclick=function(){openLoading(l.loading_id);};
-    d.innerHTML='<div class="flex items-center justify-between"><div class="font-bold">'+l.loading_id+'</div>'+st+'</div>'+
-      '<div class="text-sm text-slate-500 mt-1">SO: '+(l.so_list||'-')+'</div>'+
-      '<div class="text-sm text-slate-500">Xe: '+(l.vehicle_id||'-')+' · '+(l.total_volume_m3||0)+'/'+(l.capacity_m3||0)+' m³</div>'+
-      '<div style="background:var(--track);border-radius:999px;height:8px;margin-top:8px;overflow:hidden"><div style="height:100%;width:'+Math.min(pct,100)+'%;background:'+bc+'"></div></div>';
+    var d=document.createElement('div'); d.className='card p-4';
+    d.innerHTML='<div class="flex items-start gap-3">'+
+      '<input type="checkbox" class="ldChk" value="'+l.loading_id+'" style="width:20px;height:20px;margin-top:3px;accent-color:var(--red)" onclick="event.stopPropagation()">'+
+      '<div class="flex-1 cursor-pointer" onclick="openLoading(\''+l.loading_id+'\')">'+
+        '<div class="flex items-center justify-between"><div class="font-bold">'+l.loading_id+'</div>'+st+'</div>'+
+        '<div class="text-sm text-slate-500 mt-1">SO: '+(l.so_list||'-')+'</div>'+
+        '<div class="text-sm text-slate-500">Xe: '+(l.vehicle_id||'-')+' · '+(l.total_volume_m3||0)+'/'+(l.capacity_m3||0)+' m³ · '+(l.loading_date||'')+'</div>'+
+        '<div style="background:var(--track);border-radius:999px;height:8px;margin-top:8px;overflow:hidden"><div style="height:100%;width:'+Math.min(pct,100)+'%;background:'+bc+'"></div></div>'+
+      '</div></div>';
     list.appendChild(d);
   });
+}
+function toggleAllLd(btn){ var on=btn.textContent.indexOf('Chọn tất cả')>=0; [].forEach.call(document.querySelectorAll('.ldChk'),function(c){c.checked=on;}); btn.textContent=on?'Bỏ chọn':'Chọn tất cả'; }
+async function deleteSelectedLoadings(){
+  var ids=[].map.call(document.querySelectorAll('.ldChk:checked'),function(c){return c.value;});
+  if(!ids.length){ alert('Hãy tích chọn loading cần xóa'); return; }
+  if(!confirm('Xóa '+ids.length+' loading đã chọn?\nTồn kho sẽ được hoàn lại cho các lượt đã quét. (Loading đã hoàn tất sẽ bị bỏ qua.)')) return;
+  try{ var r=await api('deleteLoadings',{loading_ids:ids}); _ldMemo=null; _ldAll=[];
+    flashAlert((r.errors&&r.errors.length)?'warn':'good','Xóa loading','Đã xóa '+r.deleted+' loading'+((r.errors&&r.errors.length)?('\nBỏ qua: '+r.errors.length):''), true);
+    viewOutbound(document.getElementById('main'));
+  }catch(e){ alert(e.message); }
 }
 var _sosMemo=null, _editPre=null;
 function openCreateLoading(pre){
@@ -900,7 +937,9 @@ function renderLoading(d){
   var totLineVol=0;
   var rows=d.table.map(function(t){ var done=t.scanned>=t.ordered; var ve=+t.volume_each||0; var lineVol=ve*t.ordered; totLineVol+=lineVol;
     return '<tr><td>'+t.product_name+'<div class="text-xs text-slate-400">'+t.sku_code+'</div></td>'+
-      '<td class="text-center"><b style="color:'+(done?'var(--green)':'var(--navy)')+';font-size:16px">'+t.scanned+'/'+t.ordered+'</b></td>'+
+      '<td class="text-center">'+(ld.status==='done'
+        ? '<b style="color:var(--green);font-size:16px">'+t.scanned+'/'+t.ordered+'</b>'
+        : '<input type="number" min="0" max="'+t.ordered+'" value="'+t.scanned+'" onchange="setQtyManual(\''+String(t.sku_code).replace(/'/g,'')+'\',this.value)" style="width:58px;min-height:40px;text-align:center;font-weight:700;color:'+(done?'var(--green)':'var(--navy)')+'" class="field"> <span class="text-slate-400 text-sm">/ '+t.ordered+'</span>')+'</td>'+
       '<td class="text-center text-slate-600">'+(ve?ve.toFixed(3):'-')+'</td>'+
       '<td class="text-center font-semibold" style="color:var(--navy)">'+(lineVol?lineVol.toFixed(3):'-')+'</td>'+
       '<td class="text-center">'+(done?'<span style="color:var(--green)">✓</span>':'')+'</td></tr>'; }).join('');
@@ -918,6 +957,13 @@ function renderLoading(d){
     '<tr class="soft"><td class="font-bold">Tổng thể tích (theo đơn)</td><td></td><td></td><td class="text-center font-bold" style="color:var(--navy)">'+totLineVol.toFixed(3)+'</td><td></td></tr>'+
     '</tbody></table></div>'+
   (ld.status!=='done'?'<button class="btn '+(allDone?'btn-green':'btn-ghost')+' w-full" onclick="completeLoading()">'+(allDone?'✓ HOÀN TẤT LOADING':'Hoàn tất (chưa đủ số lượng)')+'</button>':'');
+}
+// Gõ tay số lượng đã quét cho 1 SKU (cộng/bớt cho khớp số nhập)
+async function setQtyManual(sku,v){
+  v=parseInt(v,10); if(isNaN(v)) return;
+  try{ await api('setOutboundQty',{loading_id:activeLoading,sku_code:sku,target:v}); }
+  catch(e){ flashAlert('bad','LỖI', e.message); }
+  openLoading(activeLoading);
 }
 function startOutboundScan(){ openScanner('Quét xuất — '+activeLoading, handleOutbound); }
 /* QUÉT XUẤT TỨC THÌ: chạy đủ 7 điểm chặn NGAY trên máy bằng dữ liệu loading + tồn kho đã tải,
@@ -1001,22 +1047,65 @@ function renderInv(){
  * ==================================================================== */
 var _ordersAll=[];
 async function viewOrders(m){
-  m.innerHTML='<div class="flex flex-wrap gap-2 mb-3"><input id="ordSearch" class="field" style="flex:1;min-width:200px" placeholder="🔍 Tìm SO / khách hàng..." oninput="renderOrders()"></div><div id="ordList" class="space-y-2"></div>';
+  m.innerHTML=
+  '<div class="sectiontitle mb-3">Đơn hàng (Sales Order)</div>'+
+  '<div class="card p-4 mb-3">'+
+    '<div class="grid grid-cols-2 md:grid-cols-4 gap-2 mb-2">'+
+      '<input id="ordSearch" class="field" placeholder="🔍 SO / khách" oninput="renderOrders()">'+
+      '<select id="ordStatus" class="field" onchange="renderOrders()"><option value="">Mọi trạng thái</option></select>'+
+      '<select id="ordState" class="field" onchange="renderOrders()"><option value="">Mọi bang</option></select>'+
+      '<select id="ordSales" class="field" onchange="renderOrders()"><option value="">Mọi NV bán</option></select>'+
+    '</div>'+
+    '<div class="grid grid-cols-2 md:grid-cols-4 gap-2">'+
+      '<div><label class="text-xs text-slate-500">Giao từ</label><input id="ordFrom" type="date" class="field" onchange="renderOrders()"></div>'+
+      '<div><label class="text-xs text-slate-500">Giao đến</label><input id="ordTo" type="date" class="field" onchange="renderOrders()"></div>'+
+      '<button class="btn btn-ghost" style="align-self:end" onclick="toggleAllOrd(this)">Chọn tất cả</button>'+
+      '<button class="btn btn-red" style="align-self:end" onclick="deleteSelectedOrders()">🗑 Xóa chọn</button>'+
+    '</div><div id="ordSummary" class="text-sm text-slate-500 mt-2"></div></div>'+
+  '<div id="ordList" class="space-y-2"></div>';
   document.getElementById('ordList').innerHTML='<div class="text-center text-slate-400 py-8">Đang tải…</div>';
   try{ _ordersAll=(await api('getOrders')).items; }catch(e){ document.getElementById('ordList').innerHTML='<div class="card p-4">'+e.message+'</div>'; return; }
-  if(currentView==='orders') renderOrders();
+  if(currentView==='orders'){ buildOrderFilters(); renderOrders(); }
+}
+function uniqSorted(arr){ var s={}; arr.forEach(function(v){ if(v) s[v]=1; }); return Object.keys(s).sort(); }
+function buildOrderFilters(){
+  function fill(id,vals){ var el=document.getElementById(id); if(!el)return; var cur=el.value, first=el.options[0].outerHTML; el.innerHTML=first+vals.map(function(v){return '<option value="'+String(v).replace(/"/g,'')+'">'+v+'</option>';}).join(''); el.value=cur; }
+  fill('ordStatus', uniqSorted(_ordersAll.map(function(o){return o.status;})));
+  fill('ordState',  uniqSorted(_ordersAll.map(function(o){return o.state;})));
+  fill('ordSales',  uniqSorted(_ordersAll.map(function(o){return o.sales_person;})));
 }
 function renderOrders(){
-  var q=(document.getElementById('ordSearch').value||'').toLowerCase();
-  var rows=_ordersAll.filter(function(o){return (o.so_number+' '+(o.customer||'')).toLowerCase().indexOf(q)>=0;}).slice(0,200);
-  var st=document.getElementById('ordList'); if(!st) return;
-  if(!rows.length){ st.innerHTML='<div class="card p-6 text-center text-slate-400">Không có đơn (hãy Import SO)</div>'; return; }
-  st.innerHTML=rows.map(function(o){
+  var g=function(id){return (document.getElementById(id)||{}).value||'';};
+  var q=g('ordSearch').toLowerCase(), st=g('ordStatus'), sv=g('ordState'), sp=g('ordSales'), from=g('ordFrom'), to=g('ordTo');
+  var rows=_ordersAll.filter(function(o){
+    if(q && (o.so_number+' '+(o.customer||'')).toLowerCase().indexOf(q)<0) return false;
+    if(st && o.status!==st) return false;
+    if(sv && o.state!==sv) return false;
+    if(sp && o.sales_person!==sp) return false;
+    if(from && (!o.delivery_date || o.delivery_date<from)) return false;
+    if(to && (!o.delivery_date || o.delivery_date>to)) return false;
+    return true;
+  });
+  var total=rows.reduce(function(a,o){return a+(+o.total_amount||0);},0);
+  var sm=document.getElementById('ordSummary'); if(sm) sm.innerHTML='<b>'+rows.length+'</b> đơn · tổng tiền <b style="color:var(--green)">'+fmtMoney(total)+'</b>';
+  var list=document.getElementById('ordList'); if(!list) return; var show=rows.slice(0,300);
+  if(!show.length){ list.innerHTML='<div class="card p-6 text-center text-slate-400">Không có đơn phù hợp</div>'; return; }
+  list.innerHTML=show.map(function(o){
     var col=o.status==='Fulfilled'?'#16a34a':(o.status==='Estimate'?'#94a3b8':'#1e40af');
-    return '<div class="card p-4 cursor-pointer" onclick="openOrder(\''+String(o.so_number).replace(/'/g,'')+'\')">'+
-      '<div class="flex items-center justify-between"><div class="font-bold">'+o.so_number+'</div><div class="font-bold" style="color:var(--green)">'+fmtMoney(o.total_amount)+'</div></div>'+
-      '<div class="text-sm text-slate-500 mt-1">'+(o.customer||'')+' · <span class="pill" style="background:'+col+';color:#fff">'+(o.status||'')+'</span> · giao '+(o.delivery_date||'-')+'</div></div>';
-  }).join('');
+    return '<div class="card p-4"><div class="flex items-start gap-3">'+
+      '<input type="checkbox" class="ordChk" value="'+String(o.so_number).replace(/"/g,'')+'" style="width:20px;height:20px;margin-top:3px;accent-color:var(--red)">'+
+      '<div class="flex-1 cursor-pointer" onclick="openOrder(\''+String(o.so_number).replace(/'/g,'')+'\')">'+
+        '<div class="flex items-center justify-between"><div class="font-bold">'+o.so_number+'</div><div class="font-bold" style="color:var(--green)">'+fmtMoney(o.total_amount)+'</div></div>'+
+        '<div class="text-sm text-slate-500 mt-1">'+(o.customer||'')+' · <span class="pill" style="background:'+col+';color:#fff">'+(o.status||'')+'</span> · '+(o.state||'')+' · giao '+(o.delivery_date||'-')+'</div>'+
+      '</div></div></div>';
+  }).join('')+(rows.length>300?'<div class="text-center text-slate-400 text-sm py-2">Hiện 300/'+rows.length+' — lọc thêm để thu hẹp</div>':'');
+}
+function toggleAllOrd(btn){ var on=btn.textContent.indexOf('Chọn tất cả')>=0; [].forEach.call(document.querySelectorAll('.ordChk'),function(c){c.checked=on;}); btn.textContent=on?'Bỏ chọn':'Chọn tất cả'; }
+async function deleteSelectedOrders(){
+  var ids=[].map.call(document.querySelectorAll('.ordChk:checked'),function(c){return c.value;});
+  if(!ids.length){ alert('Hãy tích chọn đơn cần xóa'); return; }
+  if(!confirm('Xóa '+ids.length+' đơn đã chọn? (Xóa cả các dòng hàng của đơn)')) return;
+  try{ var r=await api('deleteOrders',{so_numbers:ids}); flashAlert('good','Xóa đơn','Đã xóa '+r.deleted+' đơn', true); viewOrders(document.getElementById('main')); }catch(e){ alert(e.message); }
 }
 async function openOrder(so){
   var m=document.getElementById('main'); m.innerHTML='<div class="text-center text-slate-400 py-10">Đang tải…</div>';
