@@ -122,13 +122,22 @@
   .pop{animation:pop .18s ease both}
 
   /* ===== IN TEM (DỄ CHỈNH KÍCH THƯỚC) ===== */
-  @media print{ body *{visibility:hidden} #printArea,#printArea *{visibility:visible} #printArea{position:absolute;left:0;top:0} .label{page-break-after:always} }
-  .label{display:flex;gap:3mm;align-items:center;color:#000}
+  @media print{ body *{visibility:hidden} #printArea,#printArea *{visibility:visible} #printArea{position:absolute;left:0;top:0} .label{page-break-after:always} @page{ margin:0; } }
+  .label{display:flex;gap:3mm;align-items:center;color:#000;box-sizing:border-box;overflow:hidden}
   .label.s5030{width:50mm;height:30mm;padding:2mm}
   .label.s8050{width:80mm;height:50mm;padding:3mm}
-  .label .qrbox canvas,.label .qrbox img{width:100%;height:100%}
-  .label.s5030 .qrbox{width:26mm;height:26mm} .label.s8050 .qrbox{width:44mm;height:44mm}
-  .label .meta{font-size:8pt;line-height:1.25} .label.s8050 .meta{font-size:10pt}
+  .label.s42{width:4in;height:2in;padding:0.12in;gap:0.14in}                 /* TEM 4 x 2 inch */
+  .label .qrbox canvas,.label .qrbox img{width:100%;height:100%;display:block}
+  /* QR CỐ ĐỊNH (flex:0 0) -> không bao giờ co theo độ dài tên */
+  .label.s5030 .qrbox{flex:0 0 26mm;width:26mm;height:26mm}
+  .label.s8050 .qrbox{flex:0 0 44mm;width:44mm;height:44mm}
+  .label.s42  .qrbox{flex:0 0 1.7in;width:1.7in;height:1.7in}
+  .label .meta{flex:1 1 auto;min-width:0;overflow:hidden;color:#000}
+  .label .lname{font-weight:900;line-height:1.05;word-break:break-word}
+  .label .lsub{margin-top:3pt;line-height:1.25}
+  .label.s5030 .lname{font-size:9pt} .label.s5030 .lsub{font-size:6.5pt}
+  .label.s8050 .lname{font-size:13pt} .label.s8050 .lsub{font-size:9pt}
+  .label.s42  .lname{font-size:21pt} .label.s42 .lsub{font-size:11pt}
   .hide{display:none!important}
 </style>
 </head>
@@ -735,27 +744,31 @@ function bumpInbound(sku){
   return n;
 }
 /* ---- Mẫu tem (designer): chọn trường hiển thị, lưu vào localStorage ---- */
-var LBL_DEFAULT={showCompany:false,showName:true,showSizeThick:true,showSku:true,showDate:true,custom:''};
+var LBL_DEFAULT={showCompany:false,showName:true,showSizeThick:false,showSku:false,showDate:true,showUser:true,custom:''};
 function labelTpl(){ try{ return Object.assign({},LBL_DEFAULT,JSON.parse(localStorage.getItem('as_label_tpl')||'{}')); }catch(e){ return Object.assign({},LBL_DEFAULT); } }
 function saveLabelTpl(){
   localStorage.setItem('as_label_tpl', JSON.stringify({
     showCompany:document.getElementById('lt_co').checked, showName:document.getElementById('lt_name').checked,
     showSizeThick:document.getElementById('lt_size').checked, showSku:document.getElementById('lt_sku').checked,
-    showDate:document.getElementById('lt_date').checked, custom:document.getElementById('lt_custom').value }));
+    showDate:document.getElementById('lt_date').checked, showUser:document.getElementById('lt_user').checked, custom:document.getElementById('lt_custom').value }));
   previewQR();
 }
+// Tên SP = chữ TO (lname); các dòng phụ = chữ nhỏ (lsub). QR cố định, không bị ảnh hưởng.
 function labelMetaHTML(s,sku,date){
-  var t=labelTpl(), L=[];
-  if(t.showCompany) L.push('<b style="color:#0E2148">'+(cache.settings.company_name||'AMERICAN STAR')+'</b>');
-  if(t.showName) L.push('<b>'+(s.product_name||sku)+'</b>');
-  if(t.showSizeThick){ var sz=((s.size||'')+(s.thickness?(' · '+s.thickness):'')).trim(); if(sz)L.push(sz); }
-  if(t.showSku) L.push(sku);
-  if(t.showDate) L.push('ĐG: '+date);
-  if(t.custom) L.push(t.custom);
-  return L.join('<br>');
+  var t=labelTpl(), html='';
+  if(t.showName) html+='<div class="lname">'+(s.product_name||sku)+'</div>';
+  var sub=[];
+  if(t.showCompany) sub.push('<b>'+(cache.settings.company_name||'AMERICAN STAR')+'</b>');
+  if(t.showSizeThick){ var sz=((s.size||'')+(s.thickness?(' · '+s.thickness):'')).trim(); if(sz)sub.push(sz); }
+  if(t.showSku) sub.push(sku);
+  if(t.showDate) sub.push('Date: '+date);
+  if(t.showUser) sub.push('User: '+(session?session.username:''));
+  if(t.custom) sub.push(t.custom);
+  if(sub.length) html+='<div class="lsub">'+sub.join('<br>')+'</div>';
+  return html;
 }
 function openCreateLabel(){
-  var m=document.getElementById('main'); var size=cache.settings.label_size||'50x30'; var t=labelTpl();
+  var m=document.getElementById('main'); var size=cache.settings.label_size||'4x2'; if(size==='50x30')size='4x2'; var t=labelTpl();
   function ck(id,lbl,on){ return '<label class="flex items-center gap-2 text-sm py-1"><input type="checkbox" id="'+id+'" '+(on?'checked':'')+' onchange="saveLabelTpl()" style="width:18px;height:18px;accent-color:var(--navy)">'+lbl+'</label>'; }
   m.innerHTML=
   '<button class="btn btn-ghost mb-4" onclick="go(\'inbound\')">← Quay lại</button>'+
@@ -764,9 +777,9 @@ function openCreateLabel(){
     '<select id="skuSelect" class="field mb-3" size="6" style="height:auto"></select>'+
     '<div class="grid grid-cols-2 gap-3">'+
       '<div><label class="text-sm text-slate-500">Số lượng tem</label><input id="lblQty" type="number" value="1" min="1" class="field"></div>'+
-      '<div><label class="text-sm text-slate-500">Khổ tem</label><select id="lblSize" class="field" onchange="previewQR()"><option value="50x30"'+(size==='50x30'?' selected':'')+'>50×30 mm</option><option value="80x50"'+(size==='80x50'?' selected':'')+'>80×50 mm</option></select></div></div></div>'+
+      '<div><label class="text-sm text-slate-500">Khổ tem</label><select id="lblSize" class="field" onchange="previewQR()"><option value="4x2"'+(size==='4x2'?' selected':'')+'>4 × 2 inch</option><option value="80x50"'+(size==='80x50'?' selected':'')+'>80 × 50 mm</option><option value="50x30"'+(size==='50x30'?' selected':'')+'>50 × 30 mm</option></select></div></div></div>'+
   '<div class="card p-5 mb-3"><div class="font-semibold mb-3 text-slate-700">🎨 Thiết kế mẫu tem</div>'+
-    '<div class="grid grid-cols-2 gap-1 mb-3">'+ck('lt_co','Tên công ty',t.showCompany)+ck('lt_name','Tên sản phẩm',t.showName)+ck('lt_size','Size / độ dày',t.showSizeThick)+ck('lt_sku','Mã SKU',t.showSku)+ck('lt_date','Ngày đóng gói',t.showDate)+'</div>'+
+    '<div class="grid grid-cols-2 gap-1 mb-3">'+ck('lt_co','Tên công ty',t.showCompany)+ck('lt_name','Tên sản phẩm',t.showName)+ck('lt_size','Size / độ dày',t.showSizeThick)+ck('lt_sku','Mã SKU',t.showSku)+ck('lt_date','Ngày',t.showDate)+ck('lt_user','Người đóng gói',t.showUser)+'</div>'+
     '<label class="text-sm text-slate-500">Dòng chữ thêm (tùy chọn)</label>'+
     '<input id="lt_custom" class="field" value="'+(t.custom||'').replace(/"/g,'&quot;')+'" oninput="saveLabelTpl()" placeholder="VD: Made in USA / Hotline 1900..."></div>'+
   '<div class="card p-5"><div class="font-semibold mb-3 text-slate-700">Xem trước tem (đúng như khi in)</div>'+
@@ -798,7 +811,7 @@ function printLabels(){
   var area=document.getElementById('printArea'); area.innerHTML=''; var date=serverToday();
   for(var i=0;i<qty;i++){ var wrap=document.createElement('div'); wrap.className='label s'+size.replace('x','');
     var qb=document.createElement('div'); qb.className='qrbox'; wrap.appendChild(qb);
-    new QRCode(qb,{text:(cache.settings.qr_prefix||'')+sku,width:300,height:300,correctLevel:QRCode.CorrectLevel.M});
+    new QRCode(qb,{text:(cache.settings.qr_prefix||'')+sku,width:600,height:600,correctLevel:QRCode.CorrectLevel.M});
     var meta=document.createElement('div'); meta.className='meta'; meta.innerHTML=labelMetaHTML(s,sku,date);
     wrap.appendChild(meta); area.appendChild(wrap); }
   window.print();
@@ -1332,7 +1345,7 @@ function adminSettings(){ var s=cache.settings;
   document.getElementById('adminBody').innerHTML=
   '<div class="card p-5"><div class="font-semibold mb-3 text-slate-700">Cài đặt</div>'+
     '<label class="text-sm text-slate-500">Ngưỡng tồn cảnh báo (mặc định)</label><input id="set_thr" class="field mb-2" value="'+(s.reorder_threshold||'10')+'">'+
-    '<label class="text-sm text-slate-500">Khổ tem mặc định</label><select id="set_lbl" class="field mb-2"><option value="50x30"'+(s.label_size==='50x30'?' selected':'')+'>50×30 mm</option><option value="80x50"'+(s.label_size==='80x50'?' selected':'')+'>80×50 mm</option></select>'+
+    '<label class="text-sm text-slate-500">Khổ tem mặc định</label><select id="set_lbl" class="field mb-2"><option value="4x2"'+(s.label_size==='4x2'?' selected':'')+'>4 × 2 inch</option><option value="80x50"'+(s.label_size==='80x50'?' selected':'')+'>80 × 50 mm</option><option value="50x30"'+(s.label_size==='50x30'?' selected':'')+'>50 × 30 mm</option></select>'+
     '<label class="text-sm text-slate-500">Tiền tố QR (thường để trống)</label><input id="set_pre" class="field mb-3" value="'+(s.qr_prefix||'')+'">'+
     '<button class="btn btn-navy w-full" onclick="saveSettings()">Lưu cài đặt</button><div id="setMsg" class="text-center text-sm mt-2"></div></div>';
 }
