@@ -123,7 +123,8 @@
 
   /* ===== IN TEM (DỄ CHỈNH KÍCH THƯỚC) ===== */
   @media print{ body *{visibility:hidden} #printArea,#printArea *{visibility:visible} #printArea{position:absolute;left:0;top:0} .label{page-break-after:always} @page{ margin:0; } }
-  .label{display:flex;gap:3mm;align-items:center;color:#000;box-sizing:border-box;overflow:hidden}
+  .label{display:flex;gap:3mm;align-items:stretch;color:#000;box-sizing:border-box;overflow:hidden}
+  .label .qrbox{align-self:center}
   .label.s5030{width:50mm;height:30mm;padding:2mm}
   .label.s8050{width:80mm;height:50mm;padding:3mm}
   .label.s42{width:4in;height:2in;padding:0.12in;gap:0.14in}                 /* TEM 4 x 2 inch */
@@ -132,7 +133,7 @@
   .label.s5030 .qrbox{flex:0 0 26mm;width:26mm;height:26mm}
   .label.s8050 .qrbox{flex:0 0 44mm;width:44mm;height:44mm}
   .label.s42  .qrbox{flex:0 0 1.7in;width:1.7in;height:1.7in}
-  .label .meta{flex:1 1 auto;min-width:0;overflow:hidden;color:#000}
+  .label .meta{flex:1 1 auto;min-width:0;overflow:hidden;color:#000;display:flex;flex-direction:column;justify-content:center}
   .label .lname{font-weight:900;line-height:1.05;word-break:break-word}
   .label .lsub{margin-top:3pt;line-height:1.25}
   .label.s5030 .lname{font-size:9pt} .label.s5030 .lsub{font-size:6.5pt}
@@ -767,6 +768,12 @@ function labelMetaHTML(s,sku,date){
   if(sub.length) html+='<div class="lsub">'+sub.join('<br>')+'</div>';
   return html;
 }
+// Tự thu nhỏ cỡ chữ TÊN cho vừa khung tem -> không tràn che Date/User; QR vẫn cố định
+function fitLabel(wrap){
+  var meta=wrap.querySelector('.meta'), name=wrap.querySelector('.lname'); if(!meta||!name) return;
+  var fs=parseFloat(getComputedStyle(name).fontSize), g=0;
+  while(meta.scrollHeight>meta.clientHeight+1 && fs>8 && g<80){ fs-=1; name.style.fontSize=fs+'px'; g++; }
+}
 function openCreateLabel(){
   var m=document.getElementById('main'); var size=cache.settings.label_size||'4x2'; if(size==='50x30')size='4x2'; var t=labelTpl();
   function ck(id,lbl,on){ return '<label class="flex items-center gap-2 text-sm py-1"><input type="checkbox" id="'+id+'" '+(on?'checked':'')+' onchange="saveLabelTpl()" style="width:18px;height:18px;accent-color:var(--navy)">'+lbl+'</label>'; }
@@ -802,7 +809,7 @@ function previewQR(){
   var qb=document.createElement('div'); qb.className='qrbox'; wrap.appendChild(qb);
   new QRCode(qb,{text:(cache.settings.qr_prefix||'')+v,width:200,height:200,correctLevel:QRCode.CorrectLevel.M});
   var meta=document.createElement('div'); meta.className='meta'; meta.innerHTML=labelMetaHTML(s,v,serverToday()); wrap.appendChild(meta);
-  box.appendChild(wrap);
+  box.appendChild(wrap); fitLabel(wrap);
 }
 function printLabels(){
   var sku=document.getElementById('skuSelect').value; if(!sku){alert('Chọn SKU');return;}
@@ -813,7 +820,7 @@ function printLabels(){
     var qb=document.createElement('div'); qb.className='qrbox'; wrap.appendChild(qb);
     new QRCode(qb,{text:(cache.settings.qr_prefix||'')+sku,width:600,height:600,correctLevel:QRCode.CorrectLevel.M});
     var meta=document.createElement('div'); meta.className='meta'; meta.innerHTML=labelMetaHTML(s,sku,date);
-    wrap.appendChild(meta); area.appendChild(wrap); }
+    wrap.appendChild(meta); area.appendChild(wrap); fitLabel(wrap); }
   window.print();
 }
 
@@ -876,9 +883,10 @@ async function deleteSelectedLoadings(){
     viewOutbound(document.getElementById('main'));
   }catch(e){ alert(e.message); }
 }
-var _sosMemo=null, _editPre=null;
+var _sosMemo=null, _editPre=null, _selSO={};
 function openCreateLoading(pre){
   pre=pre||null; _editPre=pre; var m=document.getElementById('main');
+  _selSO={}; if(pre&&pre.so_list){ pre.so_list.forEach(function(sn){ _selSO[sn]=true; }); }  // giữ SO đã chọn xuyên suốt lọc
   var preVeh=pre?pre.vehicle_id:'';
   var vehOpts=cache.vehicles.filter(function(v){return String(v.active)!=='false';}).map(function(v){return '<option value="'+v.vehicle_id+'"'+(String(preVeh)===String(v.vehicle_id)?' selected':'')+'>'+v.vehicle_name+' ('+v.capacity_m3+' m³)</option>';}).join('');
   m.innerHTML=
@@ -891,6 +899,7 @@ function openCreateLoading(pre){
     '<div id="estVol" class="text-sm text-slate-500 mt-2"></div></div>'+
   '<div class="card p-5"><div class="font-semibold mb-2 text-slate-700">2 · Chọn SO để xếp (<span id="soCount">…</span> đơn)</div>'+
     '<input class="field mb-2" placeholder="🔍 Lọc SO / khách..." oninput="filterSO(this.value)">'+
+    '<div id="soSelected" class="flex flex-wrap gap-1 mb-2"></div>'+
     '<div id="soPick" style="max-height:42vh;overflow:auto;margin:0 -6px"></div></div>'+
   '<button class="btn btn-green w-full mt-3" onclick="'+(pre?'updateLoadingSave(\''+pre.loading_id+'\')':'submitLoading()')+'">💾 '+(pre?'LƯU THAY ĐỔI':'LƯU LOADING')+'</button>';
   // hiện NGAY danh sách SO từ cache (nếu có) -> không chờ
@@ -905,9 +914,7 @@ function applyOpenSOs(list, pre){
   if(pre && pre.so_list){ pre.so_list.forEach(function(sn){ if(!sos.some(function(s){return String(s.so_number)===String(sn);})) sos.push({so_number:sn,customer:'(đang trong loading)',delivery_date:'',qty_ordered:0,lines:0}); }); }
   window._openSOs=sos;
   var c=document.getElementById('soCount'); if(c) c.textContent=sos.length;
-  renderSOpick(sos);
-  if(pre && pre.so_list){ [].forEach.call(document.querySelectorAll('.soChk'),function(cb){ if(pre.so_list.indexOf(cb.value)>=0) cb.checked=true; }); }
-  recalcEst();
+  renderSOpick(sos); renderSelChips(); recalcEst();
 }
 async function updateLoadingSave(id){
   var sel=selectedSOs(); if(!sel.length){ alert('Chọn ít nhất 1 SO'); return; }
@@ -921,14 +928,18 @@ function renderSOpick(list){
   if(!list.length){ c.innerHTML='<div class="text-slate-400 text-center py-6">Không có SO cần xuất</div>'; return; }
   list.forEach(function(s){
     var row=document.createElement('label'); row.className='flex items-center gap-3 px-3 py-3 rounded-xl cursor-pointer'; row.style.borderBottom='1px solid var(--line)';
-    row.innerHTML='<input type="checkbox" class="soChk" value="'+s.so_number+'" onchange="recalcEst()" style="width:22px;height:22px;accent-color:var(--navy)">'+
+    row.innerHTML='<input type="checkbox" class="soChk" value="'+s.so_number+'"'+(_selSO[s.so_number]?' checked':'')+' onchange="toggleSelSO(this)" style="width:22px;height:22px;accent-color:var(--navy)">'+
       '<div class="flex-1"><div class="font-semibold">'+s.so_number+' · '+s.customer+'</div>'+
       '<div class="text-sm text-slate-500">Giao '+(s.delivery_date||'-')+' · '+s.qty_ordered+' cái · '+s.lines+' dòng'+(s.amount?(' · <b style="color:var(--green)">'+fmtMoney(s.amount)+'</b>'):'')+'</div></div>';
     c.appendChild(row);
   });
 }
+function toggleSelSO(cb){ if(cb.checked) _selSO[cb.value]=true; else delete _selSO[cb.value]; renderSelChips(); recalcEst(); }
+function unselSO(s){ delete _selSO[s]; [].forEach.call(document.querySelectorAll('.soChk'),function(cb){ if(cb.value===s) cb.checked=false; }); renderSelChips(); recalcEst(); }
+function renderSelChips(){ var el=document.getElementById('soSelected'); if(!el)return; var ks=Object.keys(_selSO);
+  el.innerHTML = ks.length? '<span class="text-xs text-slate-500 mr-1" style="align-self:center">Đã chọn '+ks.length+':</span>'+ks.map(function(s){return '<span class="pill" style="background:var(--navy);color:#fff;cursor:pointer" onclick="unselSO(\''+String(s).replace(/'/g,'')+'\')">'+s+' ✕</span>';}).join(' ') : ''; }
 function filterSO(q){ q=(q||'').toLowerCase(); renderSOpick((window._openSOs||[]).filter(function(s){return (s.so_number+' '+s.customer).toLowerCase().indexOf(q)>=0;})); }
-function selectedSOs(){ return [].map.call(document.querySelectorAll('.soChk:checked'),function(c){return c.value;}); }
+function selectedSOs(){ return Object.keys(_selSO); }
 function recalcEst(){
   var sel=selectedSOs(), sos=window._openSOs||[];
   var qty=sos.filter(function(s){return sel.indexOf(s.so_number)>=0;}).reduce(function(a,s){return a+s.qty_ordered;},0);
