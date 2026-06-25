@@ -10,6 +10,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 
@@ -151,11 +152,11 @@
 <!-- ============ 0. CẤU HÌNH ============ -->
 <div id="screenConfig" class="hide" style="max-width:460px;margin:0 auto;padding:40px 24px">
   <div class="text-center mb-6"><div id="cfgLogo" class="flex justify-center mb-3"></div>
-    <div class="text-slate-500">Cấu hình kết nối máy chủ</div></div>
+    <div class="text-slate-500">Kết nối Supabase</div></div>
   <div class="card p-6">
-    <label class="font-semibold">URL Web App (Apps Script)</label>
-    <p class="text-sm text-slate-500 mb-2">Dán URL kết thúc bằng <b>/exec</b>.</p>
-    <input id="cfgUrl" class="field mb-3" placeholder="https://script.google.com/macros/s/.../exec">
+    <label class="font-semibold">Anon public key</label>
+    <p class="text-sm text-slate-500 mb-2">Supabase → Settings → API → copy <b>anon public</b> (chuỗi dài bắt đầu <b>eyJ...</b>) rồi dán vào đây.</p>
+    <input id="cfgUrl" class="field mb-3" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6...">
     <button class="btn btn-navy w-full" onclick="saveConfig()">Lưu &amp; Kiểm tra kết nối</button>
     <div id="cfgMsg" class="text-center mt-3 text-sm"></div>
   </div>
@@ -175,7 +176,7 @@
       <div id="pinPad" class="grid grid-cols-3 gap-2 mb-4"></div>
       <button class="btn btn-navy w-full" onclick="doLogin()">ĐĂNG NHẬP — VÀO CA</button>
       <div id="loginMsg" class="text-center mt-3 text-sm" style="color:var(--red)"></div>
-      <div class="text-center mt-4 text-xs text-slate-400 cursor-pointer" onclick="show('screenConfig')">⚙ Đổi URL máy chủ</div>
+      <div class="text-center mt-4 text-xs text-slate-400 cursor-pointer" onclick="show('screenConfig')">⚙ Đổi khóa Supabase</div>
     </div>
   </div>
 </div>
@@ -242,11 +243,7 @@
 /*************************************************************************
  * AMERICAN STAR WMS — FRONTEND (JS thuần). Không hardcode URL/secret.
  *************************************************************************/
-var CONFIG = {
-  // ===== URL MÁY CHỦ MẶC ĐỊNH (nhúng sẵn) — ĐỔI Ở ĐÂY nếu deploy lại tạo URL mới =====
-  defaultEndpoint:'https://script.google.com/macros/s/AKfycbyirBcIywvjqb0RjwIgD1w7UFHayS2Zac97DYGe8NCd-N9cGfOxIbCoerEUP8z9PPzBNw/exec',
-  endpointKey:'as_wms_endpoint', sessionKey:'as_wms_session', queueKey:'as_wms_offline_queue', cacheKey:'as_wms_cache', dbl:3000
-};
+var CONFIG = { sessionKey:'as_wms_session', queueKey:'as_wms_offline_queue', cacheKey:'as_wms_cache', dbl:3000 };
 var ROLES = {
   packer:  {label:'Đóng gói',  icon:'📦', home:'inbound',   nav:['inbound']},
   picker:  {label:'Thủ kho',   icon:'🚚', home:'outbound',  nav:['outbound','inventory']},
@@ -296,18 +293,263 @@ function mountLogos(){
 }
 
 /* ---------- API ---------- */
-function endpoint(){ return localStorage.getItem(CONFIG.endpointKey) || CONFIG.defaultEndpoint || ''; }
-async function api(action, payload){
-  var url=endpoint(); if(!url) throw new Error('Chưa cấu hình URL máy chủ');
-  var res=await fetch(url,{method:'POST',body:JSON.stringify({action:action,token:session?session.token:'',payload:payload||{}}),redirect:'follow'});
-  var data=await res.json(); if(!data.ok) throw new Error(data.error||'Lỗi máy chủ'); return data;
+/* ================= SUPABASE — lớp dữ liệu (thay Apps Script) ================= */
+// URL nhúng sẵn. Anon key: dán sẵn vào đây cho mọi máy, HOẶC để trống -> app hỏi 1 lần ở màn cấu hình.
+var SUPABASE_URL = 'https://otdvrdcyhynbwpiiuyfm.supabase.co';
+var SUPABASE_ANON_KEY = '';            // <-- dán anon public key vào đây nếu muốn nhúng sẵn cho tất cả
+var PIN_SALT = 'AMERICAN-STAR-WMS';    // phải khớp với hash trong supabase-schema.sql
+var sb = null;
+function anonKey(){ return SUPABASE_ANON_KEY || localStorage.getItem('as_anon') || ''; }
+function ensureClient(){ if(!sb && anonKey() && window.supabase) sb = window.supabase.createClient(SUPABASE_URL, anonKey()); return sb; }
+
+function pad(n){ return (n<10?'0':'')+n; }
+function localDate(d){ d=d||new Date(); return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate()); }
+function fmtLocal(iso){ var d=new Date(iso); return localDate(d)+' '+pad(d.getHours())+':'+pad(d.getMinutes())+':'+pad(d.getSeconds()); }
+function dayRangeISO(dateStr){ var s=new Date(dateStr+'T00:00:00'); var e=new Date(dateStr+'T00:00:00'); e.setDate(e.getDate()+1); return {start:s.toISOString(), end:e.toISOString()}; }
+function ymdhms(){ var d=new Date(); return (''+d.getFullYear()).slice(2)+pad(d.getMonth()+1)+pad(d.getDate())+'-'+pad(d.getHours())+pad(d.getMinutes())+pad(d.getSeconds())+'-'+Math.floor(Math.random()*1000); }
+function chk(r){ if(r.error) throw new Error(r.error.message||'Lỗi Supabase'); return r.data; }
+function numOrNull(v){ var n=parseFloat(v); return isNaN(n)?null:n; }
+function intOrNull(v){ var n=parseInt(v,10); return isNaN(n)?null:n; }
+function val(arr,i){ return (i>=0 && i<arr.length)?String(arr[i]).trim():''; }
+var DIM_DIV={cm:1e6,mm:1e9,inch:61023.7,m:1};
+function computeVolume(L,W,H,unit){ L=parseFloat(L);W=parseFloat(W);H=parseFloat(H); if(!L||!W||!H) return ''; return Math.round(L*W*H/(DIM_DIV[unit||'cm']||1e6)*1000)/1000; }
+function dateOrNull(s){ s=String(s||'').trim(); if(!s) return null; var m=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); if(m) return m[3]+'-'+pad(+m[1])+'-'+pad(+m[2]); if(/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0,10); return null; }
+function pickSO(row){ var c=(row.perSO||[]).filter(function(s){return s.scanned<s.ordered;}).sort(function(a,b){return String(a.delivery_date||'9999').localeCompare(String(b.delivery_date||'9999'));}); return c.length?c[0].so_number:''; }
+async function hashPin(pin){ var data=new TextEncoder().encode(PIN_SALT+':'+String(pin)); var buf=await crypto.subtle.digest('SHA-256',data); var b=new Uint8Array(buf),s=''; for(var i=0;i<b.length;i++) s+=String.fromCharCode(b[i]); return btoa(s); }
+async function audit(user,action,details){ try{ await sb.from('audit_log').insert({username:user,action:action,details:details||''}); }catch(e){} }
+async function adjustInventory(sku,ds,dsh,dc){
+  var row=(chk(await sb.from('inventory').select('*').eq('sku_code',sku))||[])[0];
+  if(row){ var rec={sku_code:sku,qty_in_stock:(row.qty_in_stock||0)+ds,qty_shipped_total:(row.qty_shipped_total||0)+dsh,qty_created_total:(row.qty_created_total||0)+dc,last_updated:new Date().toISOString()}; chk(await sb.from('inventory').upsert(rec)); return rec.qty_in_stock; }
+  var rec2={sku_code:sku,qty_in_stock:ds,qty_shipped_total:dsh,qty_created_total:dc,last_updated:new Date().toISOString()}; chk(await sb.from('inventory').insert(rec2)); return ds;
+}
+async function estimateVolume(soNums){ if(!soNums||!soNums.length) return 0; var lines=chk(await sb.from('so_lines').select('sku_code,qty_ordered').in('so_number',soNums))||[]; var skus=chk(await sb.from('master_sku').select('sku_code,volume_m3'))||[]; var m={}; skus.forEach(function(s){m[s.sku_code]=+s.volume_m3||0;}); var v=0; lines.forEach(function(l){v+=(m[l.sku_code]||0)*(+l.qty_ordered||0);}); return Math.round(v*1000)/1000; }
+// CSV parser (hỗ trợ dấu phẩy trong "..." và "" escape)
+function parseCSV(text){ var rows=[],row=[],cur='',inq=false; text=String(text).replace(/\r\n/g,'\n').replace(/\r/g,'\n');
+  for(var i=0;i<text.length;i++){ var ch=text[i];
+    if(inq){ if(ch==='"'){ if(text[i+1]==='"'){cur+='"';i++;} else inq=false; } else cur+=ch; }
+    else { if(ch==='"')inq=true; else if(ch===','){row.push(cur);cur='';} else if(ch==='\n'){row.push(cur);rows.push(row);row=[];cur='';} else cur+=ch; } }
+  if(cur!==''||row.length){ row.push(cur); rows.push(row); } return rows; }
+
+var STATUS_NEED=['Issued','In Progress'];
+async function api(action, p){
+  p=p||{}; if(action==='login'||action==='ping'){} ensureClient();
+  if(!sb) throw new Error('Chưa cấu hình khóa Supabase');
+  switch(action){
+    case 'ping': { chk(await sb.from('settings').select('key').limit(1)); return {pong:true}; }
+
+    case 'login': {
+      var h=await hashPin(p.pin);
+      var u=(chk(await sb.from('users').select('*').eq('username',p.username).limit(1))||[])[0];
+      if(!u) throw new Error('Tài khoản không tồn tại');
+      if(u.active===false) throw new Error('Tài khoản đã khóa');
+      if(u.pin_hash!==h) throw new Error('Sai PIN');
+      await audit(p.username,'login','role='+u.role);
+      return { username:u.username, role:u.role, token:'sb' };
+    }
+
+    case 'getBootstrap': {
+      var rs=await Promise.all([ sb.from('master_sku').select('*'), sb.from('inventory').select('*'), sb.from('vehicles').select('*'), sb.from('settings').select('*') ]);
+      return { skus:chk(rs[0])||[], inventory:chk(rs[1])||[], vehicles:chk(rs[2])||[], settings:chk(rs[3])||[], server_date:serverToday() };
+    }
+    case 'getInventory': return { items: chk(await sb.from('inventory').select('*'))||[] };
+    case 'getVehicles':  return { items: chk(await sb.from('vehicles').select('*'))||[] };
+    case 'getSettings':  return { items: chk(await sb.from('settings').select('*'))||[] };
+
+    case 'saveSKU': {
+      var vol=computeVolume(p.length,p.width,p.height,p.dim_unit);
+      chk(await sb.from('master_sku').upsert({ sku_code:String(p.sku_code).trim(), product_name:p.product_name||p.sku_code, line:p.line||'', size:p.size||'', thickness:p.thickness||'', category:p.category||'', unit:p.unit||'ea', image_url:p.image_url||'', length:numOrNull(p.length), width:numOrNull(p.width), height:numOrNull(p.height), dim_unit:p.dim_unit||'cm', volume_m3:(vol===''?null:vol), reorder_threshold:intOrNull(p.reorder_threshold), active:true }));
+      await audit(session.username,'save_sku',String(p.sku_code).trim()); return {saved:true};
+    }
+    case 'saveVehicle': {
+      var id=p.vehicle_id||('VH-'+ymdhms());
+      chk(await sb.from('vehicles').upsert({ vehicle_id:id, vehicle_name:p.vehicle_name||'', plate_no:p.plate_no||'', capacity_m3:numOrNull(p.capacity_m3), active:true }));
+      await audit(session.username,'save_vehicle',id); return {saved:true};
+    }
+    case 'getUsers': return { items: chk(await sb.from('users').select('username,role,active,created_at'))||[] };
+    case 'saveUser': {
+      var rec={ username:p.username, role:p.role||'packer', active:true };
+      if(p.pin) rec.pin_hash=await hashPin(p.pin);
+      var ex=(chk(await sb.from('users').select('username').eq('username',p.username))||[])[0];
+      if(!ex && !rec.pin_hash) rec.pin_hash=await hashPin('0000');
+      chk(await sb.from('users').upsert(rec)); await audit(session.username,'save_user',p.username); return {saved:true};
+    }
+    case 'saveSettings': {
+      var vals=p.values||{}; var rows=Object.keys(vals).map(function(k){return {key:k,value:String(vals[k])};});
+      if(rows.length) chk(await sb.from('settings').upsert(rows)); await audit(session.username,'save_settings',JSON.stringify(vals)); return {saved:true};
+    }
+
+    case 'inboundScan': {
+      var sku=String(p.sku_code).trim();
+      var sk=(chk(await sb.from('master_sku').select('*').eq('sku_code',sku))||[])[0];
+      if(!sk) return {valid:false,code:'INVALID_QR',message:'MÃ QR KHÔNG HỢP LỆ — SKU không có trong danh mục'};
+      if(sk.active===false) return {valid:false,code:'INACTIVE',message:'SKU đã bị vô hiệu hóa'};
+      var qty=parseInt(p.qty,10)||1;
+      chk(await sb.from('inbound_scans').insert({sku_code:sku,qty:qty,packer_name:session.username,note:p.note||''}));
+      var ns=await adjustInventory(sku,qty,0,qty); await audit(session.username,'inbound','sku='+sku+' qty='+qty);
+      return {valid:true,code:'OK',sku:sk,qty_in_stock:ns};
+    }
+
+    case 'getOpenSOs': {
+      var headers=chk(await sb.from('sales_orders').select('*').in('status',STATUS_NEED))||[];
+      var sos=headers.map(function(h){return h.so_number;});
+      var lines=sos.length?chk(await sb.from('so_lines').select('*').in('so_number',sos))||[]:[];
+      var bySo={}; lines.forEach(function(l){(bySo[l.so_number]=bySo[l.so_number]||[]).push(l);});
+      return { items: headers.map(function(h){ var ls=bySo[h.so_number]||[]; var ord=ls.reduce(function(s,l){return s+(+l.qty_ordered||0);},0); var shp=ls.reduce(function(s,l){return s+(+l.qty_shipped||0);},0); return {so_number:h.so_number,customer:h.customer,delivery_date:h.delivery_date,status:h.status,lines:ls.length,qty_ordered:ord,qty_shipped:shp,remaining:ord-shp}; }) };
+    }
+
+    case 'createLoading': {
+      var id='LD-'+ymdhms(); var soList=(p.so_list||[]).join(',');
+      var veh=(chk(await sb.from('vehicles').select('*').eq('vehicle_id',p.vehicle_id))||[])[0]; var cap=veh?(+veh.capacity_m3||0):0;
+      chk(await sb.from('loadings').insert({loading_id:id,loading_date:p.loading_date||serverToday(),vehicle_id:p.vehicle_id||'',so_list:soList,status:'open',total_volume_m3:0,capacity_m3:cap,fill_percent:0,created_by:session.username,note:p.note||''}));
+      await audit(session.username,'create_loading',id);
+      return {loading_id:id,estimate_volume_m3:await estimateVolume(p.so_list||[]),capacity_m3:cap};
+    }
+    case 'updateLoading': {
+      var ld=(chk(await sb.from('loadings').select('*').eq('loading_id',p.loading_id))||[])[0];
+      if(!ld) throw new Error('Không tìm thấy loading'); if(ld.status==='done') throw new Error('Loading đã hoàn tất, không sửa được');
+      var veh=(chk(await sb.from('vehicles').select('*').eq('vehicle_id',p.vehicle_id))||[])[0]; var cap=veh?(+veh.capacity_m3||0):0;
+      chk(await sb.from('loadings').update({vehicle_id:p.vehicle_id||'',so_list:(p.so_list||[]).join(','),capacity_m3:cap,loading_date:p.loading_date||ld.loading_date}).eq('loading_id',p.loading_id));
+      await audit(session.username,'update_loading',p.loading_id);
+      return {updated:true,loading_id:p.loading_id,estimate_volume_m3:await estimateVolume(p.so_list||[]),capacity_m3:cap};
+    }
+    case 'deleteLoading': {
+      var ld2=(chk(await sb.from('loadings').select('*').eq('loading_id',p.loading_id))||[])[0];
+      if(!ld2) throw new Error('Không tìm thấy loading'); if(ld2.status==='done') throw new Error('Loading đã hoàn tất, không xóa được');
+      var oks=chk(await sb.from('outbound_scans').select('*').eq('loading_id',p.loading_id).eq('validation_status','OK'))||[];
+      for(var oi=0;oi<oks.length;oi++){ await adjustInventory(oks[oi].sku_code,+(oks[oi].qty||1),-(oks[oi].qty||1),0); }
+      chk(await sb.from('outbound_scans').delete().eq('loading_id',p.loading_id));
+      chk(await sb.from('loadings').delete().eq('loading_id',p.loading_id));
+      await audit(session.username,'delete_loading',p.loading_id); return {deleted:true,reverted:oks.length};
+    }
+    case 'getLoadings': return { items: chk(await sb.from('loadings').select('*').order('created_at',{ascending:false}))||[] };
+
+    case 'getLoading': {
+      var L=(chk(await sb.from('loadings').select('*').eq('loading_id',p.loading_id))||[])[0];
+      if(!L) throw new Error('Không tìm thấy loading');
+      var soNums=String(L.so_list).split(',').filter(Boolean);
+      var lns=soNums.length?chk(await sb.from('so_lines').select('*').in('so_number',soNums))||[]:[];
+      var hmap={}; if(soNums.length){ (chk(await sb.from('sales_orders').select('*').in('so_number',soNums))||[]).forEach(function(h){hmap[h.so_number]=h;}); }
+      var sm={}; (chk(await sb.from('master_sku').select('sku_code,product_name,volume_m3'))||[]).forEach(function(s){sm[s.sku_code]=s;});
+      var oscans=chk(await sb.from('outbound_scans').select('*').eq('loading_id',p.loading_id))||[];
+      var need={};
+      lns.forEach(function(l){ var k=l.sku_code; need[k]=need[k]||{sku_code:k,product_name:l.product_name||(sm[k]?sm[k].product_name:k),ordered:0,scanned:0,volume_each:(sm[k]?(+sm[k].volume_m3||0):0),perSO:[]}; need[k].ordered+=(+l.qty_ordered||0); need[k].perSO.push({so_number:l.so_number,delivery_date:hmap[l.so_number]?hmap[l.so_number].delivery_date:'',ordered:(+l.qty_ordered||0),scanned:0}); });
+      var svol=0;
+      oscans.filter(function(s){return s.validation_status==='OK';}).forEach(function(s){ var k=s.sku_code; if(need[k]){ need[k].scanned+=(+s.qty||1); var per=need[k].perSO.filter(function(x){return String(x.so_number)===String(s.so_number);})[0]; if(per)per.scanned+=(+s.qty||1);} if(sm[k]) svol+=(+sm[k].volume_m3||0)*(+s.qty||1); });
+      svol=Math.round(svol*1000)/1000;
+      return { loading:L, table:Object.keys(need).map(function(k){return need[k];}), scans:oscans, scanned_volume_m3:svol, estimate_volume_m3:await estimateVolume(soNums), capacity_m3:(+L.capacity_m3||0), fill_percent: L.capacity_m3?Math.round(svol/(+L.capacity_m3)*100):0 };
+    }
+
+    case 'outboundScan': {
+      var sku2=String(p.sku_code).trim(), lid=String(p.loading_id);
+      var L2=(chk(await sb.from('loadings').select('*').eq('loading_id',lid))||[])[0]; if(!L2) throw new Error('Loading không tồn tại');
+      var sk2=(chk(await sb.from('master_sku').select('*').eq('sku_code',sku2))||[])[0];
+      async function reject(code,msg,soNum){ chk(await sb.from('outbound_scans').insert({loading_id:lid,so_number:soNum||'',sku_code:sku2,qty:0,picker_name:session.username,validation_status:code,note:msg})); await audit(session.username,'outbound_reject',code+' '+sku2); return {valid:false,code:code,message:msg}; }
+      if(!sk2) return await reject('INVALID_QR','MÃ QR KHÔNG HỢP LỆ — sản phẩm không có trong hệ thống');
+      var detail=await api('getLoading',{loading_id:lid});
+      var row=detail.table.filter(function(t){return String(t.sku_code)===sku2;})[0];
+      if(!row) return await reject('WRONG_SKU','SAI SKU — Sản phẩm này KHÔNG thuộc các đơn trong loading');
+      if(row.scanned>=row.ordered) return await reject('ENOUGH','ĐÃ ĐỦ SỐ LƯỢNG SKU NÀY ('+row.ordered+').');
+      var inv=(chk(await sb.from('inventory').select('*').eq('sku_code',sku2))||[])[0]; var inStock=inv?(+inv.qty_in_stock||0):0;
+      if(inStock<=0) return await reject('NO_STOCK','HẾT TỒN — SKU này chưa có hàng đóng gói trong kho');
+      var soNum=p.so_number||pickSO(row); if(!soNum) return await reject('ENOUGH','ĐÃ ĐỦ SỐ LƯỢNG SKU NÀY','');
+      chk(await sb.from('outbound_scans').insert({loading_id:lid,so_number:soNum,sku_code:sku2,qty:1,picker_name:session.username,validation_status:'OK',note:''}));
+      await adjustInventory(sku2,-1,1,0); await audit(session.username,'outbound_ok','sku='+sku2+' so='+soNum);
+      var after=await api('getLoading',{loading_id:lid}); var ra=after.table.filter(function(t){return String(t.sku_code)===sku2;})[0];
+      return {valid:true,code:'OK',sku:sk2,so_number:soNum,scanned:ra.scanned,ordered:ra.ordered,scanned_volume_m3:after.scanned_volume_m3,capacity_m3:after.capacity_m3,fill_percent:after.fill_percent};
+    }
+
+    case 'completeLoading': {
+      var lid2=String(p.loading_id); var detail2=await api('getLoading',{loading_id:lid2}); var ld3=detail2.loading; var soNums2=String(ld3.so_list).split(',').filter(Boolean);
+      var sc=chk(await sb.from('outbound_scans').select('*').eq('loading_id',lid2).eq('validation_status','OK'))||[];
+      var got={}; sc.forEach(function(s){ var k=s.so_number+'||'+s.sku_code; got[k]=(got[k]||0)+(+s.qty||1); });
+      var lns2=soNums2.length?chk(await sb.from('so_lines').select('*').in('so_number',soNums2))||[]:[];
+      for(var li=0;li<lns2.length;li++){ var l=lns2[li]; var add=got[l.so_number+'||'+l.sku_code]||0; if(add>0) chk(await sb.from('so_lines').update({qty_shipped:(+l.qty_shipped||0)+add}).eq('id',l.id)); }
+      var lnsNow=soNums2.length?chk(await sb.from('so_lines').select('*').in('so_number',soNums2))||[]:[];
+      for(var si=0;si<soNums2.length;si++){ var so=soNums2[si]; var ls=lnsNow.filter(function(x){return String(x.so_number)===String(so);}); var ord=ls.reduce(function(s,l){return s+(+l.qty_ordered||0);},0); var shp=ls.reduce(function(s,l){return s+(+l.qty_shipped||0);},0); chk(await sb.from('sales_orders').update({status: shp>=ord?'Fulfilled':'In Progress'}).eq('so_number',so)); }
+      chk(await sb.from('loadings').update({status:'done',completed_at:new Date().toISOString(),total_volume_m3:detail2.scanned_volume_m3,fill_percent:detail2.fill_percent}).eq('loading_id',lid2));
+      await audit(session.username,'complete_loading',lid2);
+      return {done:true,loading_id:lid2,total_volume_m3:detail2.scanned_volume_m3};
+    }
+
+    case 'importSKU': {
+      var rows=parseCSV(p.csvText); if(!rows.length) throw new Error('CSV rỗng');
+      var H=rows[0].map(function(s){return String(s).trim();}); var F=['sku_code','product_name','line','size','thickness','category','unit','length','width','height','dim_unit','reorder_threshold']; var ix={}; F.forEach(function(f){ix[f]=H.indexOf(f);});
+      if(ix.sku_code<0) throw new Error('Thiếu cột bắt buộc "sku_code"');
+      var existing={}; (chk(await sb.from('master_sku').select('sku_code'))||[]).forEach(function(s){existing[s.sku_code]=true;});
+      var recs=[]; for(var i=1;i<rows.length;i++){ var r=rows[i]; if(!r||!r.length)continue; var sku=val(r,ix.sku_code); if(!sku)continue; var u=ix.dim_unit>=0?(val(r,ix.dim_unit)||'cm'):'cm'; var Lc=ix.length>=0?val(r,ix.length):'',Wc=ix.width>=0?val(r,ix.width):'',Hc=ix.height>=0?val(r,ix.height):''; var v=computeVolume(Lc,Wc,Hc,u); recs.push({sku_code:sku,product_name:ix.product_name>=0?(val(r,ix.product_name)||sku):sku,line:ix.line>=0?val(r,ix.line):'',size:ix.size>=0?val(r,ix.size):'',thickness:ix.thickness>=0?val(r,ix.thickness):'',category:ix.category>=0?val(r,ix.category):'',unit:ix.unit>=0?(val(r,ix.unit)||'ea'):'ea',length:numOrNull(Lc),width:numOrNull(Wc),height:numOrNull(Hc),dim_unit:u,volume_m3:(v===''?null:v),reorder_threshold:ix.reorder_threshold>=0?intOrNull(val(r,ix.reorder_threshold)):null,active:true}); }
+      var added=0,updated=0; recs.forEach(function(r){ if(existing[r.sku_code])updated++; else added++; });
+      for(var b=0;b<recs.length;b+=400){ chk(await sb.from('master_sku').upsert(recs.slice(b,b+400))); }
+      await audit(session.username,'import_sku','added='+added+' updated='+updated); return {added:added,updated:updated,total:recs.length};
+    }
+
+    case 'importSO': {
+      var rw=parseCSV(p.csvText); if(!rw.length) throw new Error('CSV rỗng');
+      var hd=rw[0]; var MAP={so_number:'SO #',customer:'Customer',customer_po:'Customer PO',sales_person:'Sales Person',state:'State / Province',status:'Order Status',so_date:'Order Date Issued',delivery_date:'Order Date Scheduled',sku_code:'Product Number',product_name:'Description',qty_ordered:'Ordered Qty',qty_shipped:'Shipped Qty'};
+      var ix2={}; Object.keys(MAP).forEach(function(f){ix2[f]=hd.indexOf(MAP[f]);});
+      var soH={}, soL=[], skuSeen={};
+      for(var j=1;j<rw.length;j++){ var rr=rw[j]; if(!rr||!rr.length)continue; var so=val(rr,ix2.so_number),sku3=val(rr,ix2.sku_code); if(!so||!sku3)continue; var st=val(rr,ix2.status); if(st==='Estimate')continue;
+        if(!soH[so]) soH[so]={so_number:so,customer:val(rr,ix2.customer),customer_po:val(rr,ix2.customer_po),sales_person:val(rr,ix2.sales_person),state:val(rr,ix2.state),so_date:dateOrNull(val(rr,ix2.so_date)),delivery_date:dateOrNull(val(rr,ix2.delivery_date)),status:st||'Issued',created_by:session.username};
+        soL.push({so_number:so,sku_code:sku3,product_name:val(rr,ix2.product_name),qty_ordered:intOrNull(val(rr,ix2.qty_ordered))||0,qty_shipped:intOrNull(val(rr,ix2.qty_shipped))||0});
+        if(!skuSeen[sku3]) skuSeen[sku3]=val(rr,ix2.product_name);
+      }
+      var soArr=Object.keys(soH);
+      for(var a=0;a<soArr.length;a+=400){ chk(await sb.from('sales_orders').upsert(soArr.slice(a,a+400).map(function(s){return soH[s];}))); }
+      for(var d=0;d<soArr.length;d+=100){ chk(await sb.from('so_lines').delete().in('so_number',soArr.slice(d,d+100))); }
+      for(var e=0;e<soL.length;e+=400){ chk(await sb.from('so_lines').insert(soL.slice(e,e+400))); }
+      var ex2={}; (chk(await sb.from('master_sku').select('sku_code'))||[]).forEach(function(s){ex2[s.sku_code]=true;});
+      var newSk=Object.keys(skuSeen).filter(function(s){return !ex2[s];}).map(function(s){return {sku_code:s,product_name:skuSeen[s],unit:'ea',dim_unit:'cm',active:true};});
+      for(var f=0;f<newSk.length;f+=400){ chk(await sb.from('master_sku').insert(newSk.slice(f,f+400))); }
+      await audit(session.username,'import_so','SO='+soArr.length+' lines='+soL.length+' newsku='+newSk.length);
+      return {added_so:soArr.length,added_lines:soL.length,added_sku:newSk.length,total_so:soArr.length};
+    }
+
+    case 'reportInbound': {
+      var date=p.date||serverToday(); var rng=dayRangeISO(date);
+      var scans=chk(await sb.from('inbound_scans').select('*').gte('ts',rng.start).lt('ts',rng.end))||[];
+      var bySku={},byPacker={},total=0; scans.forEach(function(s){ var q=(+s.qty||1); total+=q; bySku[s.sku_code]=(bySku[s.sku_code]||0)+q; byPacker[s.packer_name]=(byPacker[s.packer_name]||0)+q; s.timestamp=fmtLocal(s.ts); });
+      return {date:date,total:total,by_sku:bySku,by_packer:byPacker,scans:scans};
+    }
+    case 'reportOutbound': {
+      var dt=p.date||serverToday(); var rg=dayRangeISO(dt);
+      var sc2=chk(await sb.from('outbound_scans').select('*').gte('ts',rg.start).lt('ts',rg.end))||[]; sc2.forEach(function(s){s.timestamp=fmtLocal(s.ts);});
+      var ok=sc2.filter(function(s){return s.validation_status==='OK';});
+      var byError={}; sc2.filter(function(s){return s.validation_status!=='OK';}).forEach(function(s){byError[s.validation_status]=(byError[s.validation_status]||0)+1;});
+      var byPickerE={}; sc2.filter(function(s){return s.validation_status!=='OK';}).forEach(function(s){byPickerE[s.picker_name]=(byPickerE[s.picker_name]||0)+1;});
+      var soSet={}; ok.forEach(function(s){soSet[s.so_number]=true;}); var soN=Object.keys(soSet);
+      var lns=soN.length?chk(await sb.from('so_lines').select('*').in('so_number',soN))||[]:[];
+      var compare=soN.map(function(so){ var ls=lns.filter(function(l){return String(l.so_number)===String(so);}); var ord=ls.reduce(function(s,l){return s+(+l.qty_ordered||0);},0); var shp=ok.filter(function(s){return String(s.so_number)===String(so);}).length; var diff=shp-ord; return {so_number:so,ordered:ord,shipped:shp,diff:diff,status:diff===0?'KHỚP':(diff<0?'THIẾU':'SAI')}; });
+      return {date:dt,total_shipped:ok.length,by_error:byError,by_picker_error:byPickerE,compare:compare,scans:sc2};
+    }
+    case 'reportDashboard': {
+      var date2=p.date||serverToday();
+      var inv2=chk(await sb.from('inventory').select('*'))||[]; var totalStock=inv2.reduce(function(a,r){return a+(+r.qty_in_stock||0);},0);
+      var inToday=(await api('reportInbound',{date:date2})).total;
+      var outToday=(await api('reportOutbound',{date:date2})).total_shipped;
+      var openSOs=(await api('getOpenSOs')).items.length;
+      var days=[]; for(var i2=29;i2>=0;i2--){ var dd=new Date(date2+'T00:00:00'); dd.setDate(dd.getDate()-i2); days.push(localDate(dd)); }
+      var start=new Date(days[0]+'T00:00:00').toISOString(), end=new Date(new Date(date2+'T00:00:00').getTime()+86400000).toISOString();
+      var inS=chk(await sb.from('inbound_scans').select('ts,qty').gte('ts',start).lt('ts',end))||[];
+      var outS=chk(await sb.from('outbound_scans').select('ts,sku_code,validation_status').gte('ts',start).lt('ts',end).eq('validation_status','OK'))||[];
+      var inMap={},outMap={},top={};
+      inS.forEach(function(s){var d=localDate(new Date(s.ts)); inMap[d]=(inMap[d]||0)+(+s.qty||1);});
+      outS.forEach(function(s){var d=localDate(new Date(s.ts)); outMap[d]=(outMap[d]||0)+1; top[s.sku_code]=(top[s.sku_code]||0)+1;});
+      var settings={}; (chk(await sb.from('settings').select('*'))||[]).forEach(function(s){settings[s.key]=s.value;});
+      var skuTh={}; (chk(await sb.from('master_sku').select('sku_code,reorder_threshold'))||[]).forEach(function(s){skuTh[s.sku_code]=s.reorder_threshold;});
+      var defTh=parseInt(settings.reorder_threshold||'10',10)||10;
+      var lowStock=inv2.filter(function(r){ var th=(skuTh[r.sku_code]!=null?skuTh[r.sku_code]:defTh); return (+r.qty_in_stock||0)<th; }).map(function(r){return {sku_code:r.sku_code,qty:+r.qty_in_stock||0};});
+      var overdue=(chk(await sb.from('sales_orders').select('*').in('status',STATUS_NEED))||[]).filter(function(h){return h.delivery_date&&h.delivery_date<date2;}).map(function(h){return {so_number:h.so_number,customer:h.customer,delivery_date:h.delivery_date};});
+      return {date:date2,kpi:{in_today:inToday,out_today:outToday,total_stock:totalStock,open_so:openSOs},days:days,line_in:days.map(function(d){return inMap[d]||0;}),line_out:days.map(function(d){return outMap[d]||0;}),top_sku:Object.keys(top).map(function(k){return {sku_code:k,qty:top[k]};}).sort(function(a,b){return b.qty-a.qty;}).slice(0,10),low_stock:lowStock,overdue:overdue};
+    }
+
+    default: throw new Error('Action không hỗ trợ: '+action);
+  }
 }
 
 /* ---------- KHỞI ĐỘNG ---------- */
 window.addEventListener('load', function(){
   initTheme(); mountLogos(); buildRoleGrid(); buildPinPad();
   window.addEventListener('online',updateNet); window.addEventListener('offline',updateNet);
-  if(!endpoint()){ show('screenConfig'); return; }
+  if(!anonKey()){ show('screenConfig'); return; }
   var s=localStorage.getItem(CONFIG.sessionKey);
   if(s){ session=JSON.parse(s); enterApp(); } else show('screenLogin');
 });
@@ -315,10 +557,10 @@ function show(id){ ['screenConfig','screenLogin','app'].forEach(function(x){ doc
 
 /* ---------- CẤU HÌNH ---------- */
 function saveConfig(){
-  var url=document.getElementById('cfgUrl').value.trim(), msg=document.getElementById('cfgMsg');
-  if(!/^https:\/\/script\.google\.com\/.+\/exec$/.test(url)){ msg.style.color='var(--red)'; msg.textContent='URL phải dạng https://script.google.com/.../exec'; return; }
-  localStorage.setItem(CONFIG.endpointKey,url); msg.style.color='var(--navy)'; msg.textContent='Đang kiểm tra...';
-  api('ping').then(function(){ msg.style.color='var(--green)'; msg.textContent='Kết nối OK ✓'; setTimeout(function(){show('screenLogin');},700); })
+  var key=document.getElementById('cfgUrl').value.trim(), msg=document.getElementById('cfgMsg');
+  if(key.length<20){ msg.style.color='var(--red)'; msg.textContent='Dán anon public key (chuỗi dài bắt đầu eyJ...)'; return; }
+  localStorage.setItem('as_anon',key); sb=null; ensureClient(); msg.style.color='var(--navy)'; msg.textContent='Đang kiểm tra kết nối...';
+  api('ping').then(function(){ msg.style.color='var(--green)'; msg.textContent='Kết nối Supabase OK ✓'; setTimeout(function(){show('screenLogin');},700); })
              .catch(function(e){ msg.style.color='var(--red)'; msg.textContent='Lỗi: '+e.message; });
 }
 
