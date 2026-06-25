@@ -355,6 +355,14 @@ async function api(action, p){
       return { skus:chk(rs[0])||[], inventory:chk(rs[1])||[], vehicles:chk(rs[2])||[], settings:chk(rs[3])||[], server_date:serverToday() };
     }
     case 'getInventory': return { items: chk(await sb.from('inventory').select('*'))||[] };
+    case 'adjustStock': {
+      var skuA=String(p.sku_code).trim(); var delta=parseInt(p.delta,10)||0;
+      var rowA=(chk(await sb.from('inventory').select('*').eq('sku_code',skuA))||[])[0];
+      var curA=rowA?(+rowA.qty_in_stock||0):0; var nv=curA+delta; if(nv<0)nv=0;
+      if(rowA){ chk(await sb.from('inventory').update({qty_in_stock:nv,qty_created_total:(+rowA.qty_created_total||0)+(delta>0?delta:0),last_updated:new Date().toISOString()}).eq('sku_code',skuA)); }
+      else { chk(await sb.from('inventory').insert({sku_code:skuA,qty_in_stock:nv,qty_shipped_total:0,qty_created_total:(delta>0?delta:0),last_updated:new Date().toISOString()})); }
+      await audit(session.username,'adjust_stock',skuA+' delta='+delta+' -> '+nv); return {ok:true,qty:nv};
+    }
     case 'getVehicles':  return { items: chk(await sb.from('vehicles').select('*'))||[] };
     case 'getSettings':  return { items: chk(await sb.from('settings').select('*'))||[] };
 
@@ -479,7 +487,7 @@ async function api(action, p){
       var H=rows[0].map(function(s){return String(s).trim();}); var F=['sku_code','product_name','line','size','thickness','category','unit','length','width','height','dim_unit','reorder_threshold']; var ix={}; F.forEach(function(f){ix[f]=H.indexOf(f);});
       if(ix.sku_code<0) throw new Error('Thiếu cột bắt buộc "sku_code"');
       var existing={}; (chk(await sb.from('master_sku').select('sku_code'))||[]).forEach(function(s){existing[s.sku_code]=true;});
-      var recs=[]; for(var i=1;i<rows.length;i++){ var r=rows[i]; if(!r||!r.length)continue; var sku=val(r,ix.sku_code); if(!sku)continue; var u=ix.dim_unit>=0?(val(r,ix.dim_unit)||'cm'):'cm'; var Lc=ix.length>=0?val(r,ix.length):'',Wc=ix.width>=0?val(r,ix.width):'',Hc=ix.height>=0?val(r,ix.height):''; var v=computeVolume(Lc,Wc,Hc,u); recs.push({sku_code:sku,product_name:ix.product_name>=0?(val(r,ix.product_name)||sku):sku,line:ix.line>=0?val(r,ix.line):'',size:ix.size>=0?val(r,ix.size):'',thickness:ix.thickness>=0?val(r,ix.thickness):'',category:ix.category>=0?val(r,ix.category):'',unit:ix.unit>=0?(val(r,ix.unit)||'ea'):'ea',length:numOrNull(Lc),width:numOrNull(Wc),height:numOrNull(Hc),dim_unit:u,volume_m3:(v===''?null:v),reorder_threshold:ix.reorder_threshold>=0?intOrNull(val(r,ix.reorder_threshold)):null,active:true}); }
+      var recs=[]; for(var i=1;i<rows.length;i++){ var r=rows[i]; if(!r||!r.length)continue; var sku=val(r,ix.sku_code); if(!sku)continue; var u=ix.dim_unit>=0?(val(r,ix.dim_unit)||'inch'):'inch'; var Lc=ix.length>=0?val(r,ix.length):'',Wc=ix.width>=0?val(r,ix.width):'',Hc=ix.height>=0?val(r,ix.height):''; var v=computeVolume(Lc,Wc,Hc,u); recs.push({sku_code:sku,product_name:ix.product_name>=0?(val(r,ix.product_name)||sku):sku,line:ix.line>=0?val(r,ix.line):'',size:ix.size>=0?val(r,ix.size):'',thickness:ix.thickness>=0?val(r,ix.thickness):'',category:ix.category>=0?val(r,ix.category):'',unit:ix.unit>=0?(val(r,ix.unit)||'ea'):'ea',length:numOrNull(Lc),width:numOrNull(Wc),height:numOrNull(Hc),dim_unit:u,volume_m3:(v===''?null:v),reorder_threshold:ix.reorder_threshold>=0?intOrNull(val(r,ix.reorder_threshold)):null,active:true}); }
       var added=0,updated=0; recs.forEach(function(r){ if(existing[r.sku_code])updated++; else added++; });
       for(var b=0;b<recs.length;b+=400){ chk(await sb.from('master_sku').upsert(recs.slice(b,b+400))); }
       await audit(session.username,'import_sku','added='+added+' updated='+updated); return {added:added,updated:updated,total:recs.length};
@@ -509,7 +517,7 @@ async function api(action, p){
       for(var d=0;d<soArr.length;d+=100){ chk(await sb.from('so_lines').delete().in('so_number',soArr.slice(d,d+100))); }
       for(var e=0;e<soL.length;e+=300){ chk(await sb.from('so_lines').insert(soL.slice(e,e+300))); }
       var ex2={}; (chk(await sb.from('master_sku').select('sku_code'))||[]).forEach(function(s){ex2[s.sku_code]=true;});
-      var newSk=Object.keys(skuSeen).filter(function(s){return !ex2[s];}).map(function(s){return {sku_code:s,product_name:skuSeen[s],unit:'ea',dim_unit:'cm',active:true};});
+      var newSk=Object.keys(skuSeen).filter(function(s){return !ex2[s];}).map(function(s){return {sku_code:s,product_name:skuSeen[s],unit:'ea',dim_unit:'inch',active:true};});
       for(var f=0;f<newSk.length;f+=400){ chk(await sb.from('master_sku').insert(newSk.slice(f,f+400))); }
       await audit(session.username,'import_so','SO='+soArr.length+' lines='+soL.length+' newsku='+newSk.length);
       return {added_so:soArr.length,added_lines:soL.length,added_sku:newSk.length,total_so:soArr.length};
@@ -1021,9 +1029,15 @@ function viewInventory(m){
   var totalStock=window._inv.reduce(function(a,r){return a+r.in_stock;},0);
   m.innerHTML=
   '<div class="grid grid-cols-3 gap-3 mb-4" id="invKpi">'+kpi('Loại SKU',window._inv.length,'var(--navy)','🏷️')+kpi('Tổng tồn',totalStock,'var(--amber)','📦')+kpi('Sắp hết', window._inv.filter(function(r){return r.in_stock<(parseInt(cache.settings.reorder_threshold||"10",10));}).length,'var(--red)','⚠️')+'</div>'+
+  '<div class="card p-3 mb-3"><div class="flex flex-wrap gap-2 items-end">'+
+    '<div style="flex:2;min-width:170px"><label class="text-xs text-slate-500">Cộng tồn thủ công cho SKU</label><select id="adjSku" class="field"></select></div>'+
+    '<div style="flex:1;min-width:90px"><label class="text-xs text-slate-500">Số lượng (+/-)</label><input id="adjQty" type="number" class="field" value="1"></div>'+
+    '<button class="btn btn-green" onclick="addStockManual()">➕ Cộng tồn</button></div>'+
+    '<div class="text-xs text-slate-400 mt-2">Hoặc bấm thẳng vào ô “Tồn” trong bảng để sửa số tồn.</div></div>'+
   '<div class="flex flex-wrap gap-2 mb-3"><input id="invSearch" class="field" style="flex:1;min-width:180px" placeholder="🔍 Tìm SKU / sản phẩm..." oninput="renderInv()">'+
     '<button class="btn btn-ghost" onclick="exportCSV(window._inv,\'tonkho.csv\')">⬇ CSV</button></div>'+
-  '<div class="card overflow-auto"><table><thead><tr><th onclick="sortInv(\'name\')">Sản phẩm</th><th>Size</th><th class="text-center" onclick="sortInv(\'in_stock\')">Tồn</th><th class="text-center" onclick="sortInv(\'shipped\')">Đã xuất</th><th class="text-center" onclick="sortInv(\'created\')">Đã tạo</th><th class="text-center">m³</th></tr></thead><tbody id="invBody"></tbody></table></div>';
+  '<div class="card overflow-auto"><table><thead><tr><th onclick="sortInv(\'name\')">Sản phẩm</th><th>Size</th><th class="text-center" onclick="sortInv(\'in_stock\')">Tồn (sửa được)</th><th class="text-center" onclick="sortInv(\'shipped\')">Đã xuất</th><th class="text-center" onclick="sortInv(\'created\')">Đã tạo</th><th class="text-center">m³</th></tr></thead><tbody id="invBody"></tbody></table></div>';
+  var asel=document.getElementById('adjSku'); if(asel) asel.innerHTML=cache.skus.slice(0,2000).map(function(s){return '<option value="'+String(s.sku_code).replace(/"/g,'')+'">'+s.sku_code+'</option>';}).join('');
   renderInv();
   // 2) Làm mới nền: lấy tồn mới nhất rồi chỉ cập nhật bảng (không reset ô tìm kiếm)
   api('getInventory').then(function(r){ cache.inventory=r.items; try{localStorage.setItem(CONFIG.cacheKey,JSON.stringify(cache));}catch(e){} if(currentView==='inventory'){ buildInvData(); renderInv(); } }).catch(function(){});
@@ -1037,9 +1051,25 @@ function renderInv(){
   var th=parseInt(cache.settings.reorder_threshold||'10',10);
   document.getElementById('invBody').innerHTML=rows.map(function(r){ var low=r.in_stock<th;
     return '<tr><td>'+r.name+'<div class="text-xs text-slate-400">'+r.sku_code+'</div></td><td>'+r.size+'</td>'+
-      '<td class="text-center"><b style="color:'+(low?'var(--red)':'var(--navy)')+';font-size:16px">'+r.in_stock+'</b></td>'+
+      '<td class="text-center"><input type="number" min="0" value="'+r.in_stock+'" onchange="setStockManual(\''+String(r.sku_code).replace(/'/g,'')+'\',this.value)" style="width:74px;text-align:center;font-weight:700;color:'+(low?'var(--red)':'var(--navy)')+'" class="field"></td>'+
       '<td class="text-center">'+r.shipped+'</td><td class="text-center">'+r.created+'</td><td class="text-center text-slate-500">'+(r.vol||'-')+'</td></tr>';
   }).join('')||'<tr><td colspan="6" class="text-center text-slate-400 py-8">Không có dữ liệu</td></tr>';
+}
+function updateInvKpi(){ var el=document.getElementById('invKpi'); if(!el)return; var ts=window._inv.reduce(function(a,r){return a+r.in_stock;},0); el.innerHTML=kpi('Loại SKU',window._inv.length,'var(--navy)','🏷️')+kpi('Tổng tồn',ts,'var(--amber)','📦')+kpi('Sắp hết', window._inv.filter(function(r){return r.in_stock<(parseInt(cache.settings.reorder_threshold||"10",10));}).length,'var(--red)','⚠️'); }
+async function addStockManual(){
+  var sku=(document.getElementById('adjSku')||{}).value; var qty=parseInt((document.getElementById('adjQty')||{}).value,10);
+  if(!sku){alert('Chọn SKU');return;} if(isNaN(qty)||qty===0){alert('Nhập số lượng khác 0');return;}
+  try{ var r=await api('adjustStock',{sku_code:sku,delta:qty});
+    flashAlert('good','✓ ĐÃ CỘNG TỒN', sku+'\nTồn mới: '+r.qty, true);
+    api('getInventory').then(function(rr){ cache.inventory=rr.items; if(currentView==='inventory'){ buildInvData(); renderInv(); updateInvKpi(); } }).catch(function(){});
+  }catch(e){ alert(e.message); }
+}
+async function setStockManual(sku,v){
+  v=parseInt(v,10); if(isNaN(v))return;
+  var row=(window._inv||[]).filter(function(x){return x.sku_code===sku;})[0]; var cur=row?row.in_stock:0; var delta=v-cur;
+  if(delta===0) return;
+  try{ var r=await api('adjustStock',{sku_code:sku,delta:delta}); if(row)row.in_stock=r.qty; updateInvKpi(); api('getInventory').then(function(rr){cache.inventory=rr.items;}).catch(function(){}); }
+  catch(e){ alert(e.message); }
 }
 
 /* ====================================================================
@@ -1227,7 +1257,7 @@ function adminSKU(){
   '<div class="card p-5 mb-3"><div class="font-semibold mb-3 text-slate-700">Thêm / Sửa SKU (kèm kích thước để tính m³)</div>'+
     '<input id="sk_code" class="field mb-2" placeholder="sku_code (chính là nội dung mã QR)"><input id="sk_name" class="field mb-2" placeholder="Tên sản phẩm">'+
     '<div class="grid grid-cols-3 gap-2 mb-2"><input id="sk_size" class="field" placeholder="Size"><input id="sk_thick" class="field" placeholder="Độ dày"><input id="sk_line" class="field" placeholder="Dòng"></div>'+
-    '<div class="grid grid-cols-4 gap-2 mb-2"><input id="sk_l" class="field" placeholder="Dài"><input id="sk_w" class="field" placeholder="Rộng"><input id="sk_h" class="field" placeholder="Cao"><select id="sk_unit" class="field"><option>cm</option><option>mm</option><option>inch</option><option>m</option></select></div>'+
+    '<div class="grid grid-cols-4 gap-2 mb-2"><input id="sk_l" class="field" placeholder="Dài"><input id="sk_w" class="field" placeholder="Rộng"><input id="sk_h" class="field" placeholder="Cao"><select id="sk_unit" class="field"><option>inch</option><option>cm</option><option>mm</option><option>m</option></select></div>'+
     '<div class="grid grid-cols-2 gap-2 mb-3"><input id="sk_thr" class="field" placeholder="Ngưỡng tồn cảnh báo"><input id="sk_img" class="field" placeholder="URL ảnh (tùy chọn)"></div>'+
     '<button class="btn btn-navy w-full" onclick="saveSKU()">Lưu SKU</button><div id="skMsg" class="text-center text-sm mt-2"></div></div>'+
   '<div class="card p-4"><input class="field mb-2" placeholder="🔍 Tìm SKU..." oninput="renderAdminSKU(this.value)"><div id="adminSkuList" style="max-height:48vh;overflow:auto"></div></div>';
@@ -1241,7 +1271,7 @@ function renderAdminSKU(q){ q=(q||'').toLowerCase();
 }
 function fillSKU(js){ var s=JSON.parse(js),g=function(id){return document.getElementById(id);};
   g('sk_code').value=s.sku_code; g('sk_name').value=s.product_name||''; g('sk_size').value=s.size||''; g('sk_thick').value=s.thickness||''; g('sk_line').value=s.line||'';
-  g('sk_l').value=s.length||''; g('sk_w').value=s.width||''; g('sk_h').value=s.height||''; g('sk_unit').value=s.dim_unit||'cm'; g('sk_thr').value=s.reorder_threshold||''; g('sk_img').value=s.image_url||''; window.scrollTo(0,0);
+  g('sk_l').value=s.length||''; g('sk_w').value=s.width||''; g('sk_h').value=s.height||''; g('sk_unit').value=s.dim_unit||'inch'; g('sk_thr').value=s.reorder_threshold||''; g('sk_img').value=s.image_url||''; window.scrollTo(0,0);
 }
 async function saveSKU(){ var g=function(id){return document.getElementById(id).value;};
   try{ await api('saveSKU',{sku_code:g('sk_code'),product_name:g('sk_name'),size:g('sk_size'),thickness:g('sk_thick'),line:g('sk_line'),length:g('sk_l'),width:g('sk_w'),height:g('sk_h'),dim_unit:g('sk_unit'),reorder_threshold:g('sk_thr'),image_url:g('sk_img')});
@@ -1251,9 +1281,9 @@ async function saveSKU(){ var g=function(id){return document.getElementById(id).
 
 /* ---- IMPORT DANH MỤC SKU TỪ CSV ---- */
 var SKU_TEMPLATE='sku_code,product_name,line,size,thickness,category,unit,length,width,height,dim_unit,reorder_threshold\n'+
-  '"MEDISPA HYBRID FIRM 13"" Mattress-TWIN","MEDISPA HYBRID FIRM 13"" Hybrid Mattress-TWIN",MEDISPA,TWIN,"13""",Mattress,ea,191,99,33,cm,10\n'+
-  '"MEDISPA HYBRID PLUSH 14"" Mattress-QUEEN","MEDISPA HYBRID PLUSH 14"" Hybrid Mattress-QUEEN",MEDISPA,QUEEN,"14""",Mattress,ea,203,152,36,cm,8\n'+
-  '"PRESIDENTIAL ULTRA 13"" Mattress-KING","PRESIDENTIAL ULTRA 13"" Hybrid Mattress-KING",PRESIDENTIAL,KING,"13""",Mattress,ea,203,193,33,cm,6';
+  '"MEDISPA HYBRID FIRM 13"" Mattress-TWIN","MEDISPA HYBRID FIRM 13"" Hybrid Mattress-TWIN",MEDISPA,TWIN,"13""",Mattress,ea,75,39,13,inch,10\n'+
+  '"MEDISPA HYBRID PLUSH 14"" Mattress-QUEEN","MEDISPA HYBRID PLUSH 14"" Hybrid Mattress-QUEEN",MEDISPA,QUEEN,"14""",Mattress,ea,80,60,14,inch,8\n'+
+  '"PRESIDENTIAL ULTRA 13"" Mattress-KING","PRESIDENTIAL ULTRA 13"" Hybrid Mattress-KING",PRESIDENTIAL,KING,"13""",Mattress,ea,80,76,13,inch,6';
 function adminImportSKU(){
   document.getElementById('adminBody').innerHTML=
   '<div class="card p-5"><div class="font-semibold mb-1 text-slate-700">Import danh mục sản phẩm (SKU) từ CSV</div>'+
