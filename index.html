@@ -380,7 +380,7 @@ async function api(action, p){
 
     case 'saveSKU': {
       var vol=computeVolume(p.length,p.width,p.height,p.dim_unit||'inch');
-      chk(await sb.from('master_sku').upsert({ sku_code:String(p.sku_code).trim(), product_name:p.product_name||p.sku_code, line:p.line||'', size:p.size||'', thickness:p.thickness||'', category:p.category||'', sku_group:p.sku_group||'', unit:p.unit||'ea', image_url:p.image_url||'', length:numOrNull(p.length), width:numOrNull(p.width), height:numOrNull(p.height), dim_unit:p.dim_unit||'inch', volume_m3:(vol===''?null:vol), reorder_threshold:intOrNull(p.reorder_threshold), active:true }));
+      chk(await sb.from('master_sku').upsert({ sku_code:String(p.sku_code).trim(), product_name:p.product_name||p.sku_code, line:p.line||'', size:p.size||'', thickness:p.thickness||'', category:p.category||'', sku_group:p.sku_group||'', unit:p.unit||'ea', image_url:p.image_url||'', length:numOrNull(p.length), width:numOrNull(p.width), height:numOrNull(p.height), dim_unit:p.dim_unit||'inch', volume_m3:(vol===''?null:vol), reorder_threshold:intOrNull(p.reorder_threshold), active:(String(p.active)==='false'?false:true) }));
       await audit(session.username,'save_sku',String(p.sku_code).trim()); return {saved:true};
     }
     case 'saveVehicle': {
@@ -1101,17 +1101,19 @@ async function setStockManual(sku,v){
 /* ====================================================================
  * 4a. SẢN PHẨM — danh mục (catalog)
  * ==================================================================== */
+var _prRows=[];
 function viewProducts(m){
   function render(){
     var q=((document.getElementById('prSearch')||{}).value||'').toLowerCase();
     var gg=((document.getElementById('prGroup')||{}).value||'');
-    var rows=(cache.skus||[]).filter(function(s){ if(gg && (s.sku_group||'')!==gg) return false; return (s.sku_code+' '+(s.product_name||'')+' '+(s.line||'')).toLowerCase().indexOf(q)>=0; });
-    document.getElementById('prBody').innerHTML=rows.slice(0,800).map(function(s){
-      return '<tr><td>'+(s.product_name||'')+'<div class="text-xs text-slate-400">'+s.sku_code+'</div></td><td>'+(s.line||'')+'</td><td>'+(s.size||'')+'</td><td>'+(s.thickness||'')+'</td><td>'+(s.category||'')+'</td>'+
+    _prRows=(cache.skus||[]).filter(function(s){ if(gg && (s.sku_group||'')!==gg) return false; return (s.sku_code+' '+(s.product_name||'')+' '+(s.line||'')).toLowerCase().indexOf(q)>=0; }).slice(0,800);
+    document.getElementById('prBody').innerHTML=_prRows.map(function(s,i){
+      return '<tr class="cursor-pointer" onclick="openProductEdit('+i+')"><td>'+(s.product_name||'')+'<div class="text-xs text-slate-400">'+s.sku_code+'</div></td><td>'+(s.line||'')+'</td><td>'+(s.size||'')+'</td><td>'+(s.thickness||'')+'</td><td>'+(s.category||'')+'</td>'+
         '<td>'+(s.sku_group?'<span class="pill" style="background:var(--soft);color:var(--ink)">'+s.sku_group+'</span>':'<span class="text-slate-400">-</span>')+'</td>'+
-        '<td class="text-center text-slate-500">'+(s.volume_m3||'-')+'</td><td class="text-center">'+(String(s.active)==='false'?'<span style="color:var(--red)">khóa</span>':'✓')+'</td></tr>';
-    }).join('')||'<tr><td colspan="8" class="text-center text-slate-400 py-6">Trống — hãy Import SKU ở Quản trị</td></tr>';
-    var c=document.getElementById('prCount'); if(c) c.textContent=rows.length;
+        '<td class="text-center text-slate-500">'+(s.volume_m3||'-')+'</td><td class="text-center">'+(String(s.active)==='false'?'<span style="color:var(--red)">khóa</span>':'✓')+'</td>'+
+        '<td class="text-center"><span class="pill" style="background:var(--navy);color:#fff">✏ Sửa</span></td></tr>';
+    }).join('')||'<tr><td colspan="9" class="text-center text-slate-400 py-6">Trống — hãy Import SKU ở Quản trị</td></tr>';
+    var c=document.getElementById('prCount'); if(c) c.textContent=_prRows.length;
   }
   window._prRender=render;
   var groups=uniqSorted((cache.skus||[]).map(function(s){return s.sku_group;}));
@@ -1120,11 +1122,37 @@ function viewProducts(m){
     '<button class="btn btn-ghost" onclick="exportCSV(cache.skus,\'danh-muc-san-pham.csv\')">⬇ CSV</button></div>'+
   '<div class="flex flex-wrap gap-2 mb-3">'+
     '<input id="prSearch" class="field" style="flex:1;min-width:180px" placeholder="🔍 Tìm SKU / tên / dòng..." oninput="_prRender&&_prRender()">'+
-    '<select id="prGroup" class="field" style="min-width:150px" onchange="_prRender&&_prRender()"><option value="">Mọi Group</option>'+groups.map(function(g){return '<option value="'+String(g).replace(/"/g,'')+'">'+g+'</option>';}).join('')+'</select>'+
-    '<button class="btn btn-navy" onclick="go(\'admin\')">✏ Sửa/Thêm SKU</button></div>'+
-  '<div class="card overflow-auto"><table><thead><tr><th>Sản phẩm</th><th>Dòng</th><th>Size</th><th>Độ dày</th><th>Loại</th><th>Group</th><th class="text-center">m³</th><th class="text-center">TT</th></tr></thead><tbody id="prBody"></tbody></table></div>';
+    '<select id="prGroup" class="field" style="min-width:150px" onchange="_prRender&&_prRender()"><option value="">Mọi Group</option>'+groups.map(function(g){return '<option value="'+String(g).replace(/"/g,'')+'">'+g+'</option>';}).join('')+'</select></div>'+
+  '<div class="text-xs text-slate-400 mb-2">Bấm vào 1 dòng để sửa thông tin SKU.</div>'+
+  '<div class="card overflow-auto"><table><thead><tr><th>Sản phẩm</th><th>Dòng</th><th>Size</th><th>Độ dày</th><th>Loại</th><th>Group</th><th class="text-center">m³</th><th class="text-center">TT</th><th></th></tr></thead><tbody id="prBody"></tbody></table></div>';
   render();
   refreshCache().then(function(){ if(currentView==='products') render(); }).catch(function(){});
+}
+// Sửa SKU ngay trong màn Sản phẩm (truyền INDEX để tránh lỗi dấu " trong mã)
+function openProductEdit(i){
+  var s=_prRows[i]; if(!s){alert('Không tìm thấy SKU');return;}
+  var m=document.getElementById('main');
+  function f(id,label,v,ph){ return '<div><label class="text-xs text-slate-500">'+label+'</label><input id="'+id+'" class="field" value="'+String(v==null?'':v).replace(/"/g,'&quot;')+'" placeholder="'+(ph||'')+'"></div>'; }
+  m.innerHTML=
+  '<button class="btn btn-ghost mb-4" onclick="go(\'products\')">← Danh mục</button>'+
+  '<div class="sectiontitle mb-3">Sửa sản phẩm</div>'+
+  '<div class="card p-5">'+
+    '<label class="text-xs text-slate-500">Mã SKU (mã QR — không sửa)</label><input id="pe_code" class="field mb-2" value="'+String(s.sku_code).replace(/"/g,'&quot;')+'" readonly style="opacity:.7">'+
+    f('pe_name','Tên sản phẩm',s.product_name)+
+    '<div class="grid grid-cols-3 gap-2 mt-2">'+f('pe_line','Dòng',s.line)+f('pe_size','Size',s.size)+f('pe_thick','Độ dày',s.thickness)+'</div>'+
+    '<div class="grid grid-cols-2 gap-2 mt-2">'+f('pe_cat','Loại (category)',s.category)+f('pe_group','Group',s.sku_group)+'</div>'+
+    '<div class="grid grid-cols-4 gap-2 mt-2">'+f('pe_l','Dài (inch)',s.length)+f('pe_w','Rộng',s.width)+f('pe_h','Cao',s.height)+f('pe_thr','Ngưỡng tồn',s.reorder_threshold)+'</div>'+
+    '<div class="mt-2">'+f('pe_img','URL ảnh (tùy chọn)',s.image_url)+'</div>'+
+    '<label class="flex items-center gap-2 mt-3 text-sm"><input type="checkbox" id="pe_active" '+(String(s.active)==='false'?'':'checked')+' style="width:18px;height:18px;accent-color:var(--navy)"> Đang hoạt động (bỏ tick = vô hiệu hóa SKU)</label>'+
+    '<button class="btn btn-navy w-full mt-3" onclick="saveProduct()">💾 Lưu thay đổi</button><div id="peMsg" class="text-center text-sm mt-2"></div>'+
+  '</div>';
+}
+async function saveProduct(){
+  var g=function(id){return document.getElementById(id).value;};
+  try{ await api('saveSKU',{sku_code:document.getElementById('pe_code').value,product_name:g('pe_name'),line:g('pe_line'),size:g('pe_size'),thickness:g('pe_thick'),category:g('pe_cat'),sku_group:g('pe_group'),length:g('pe_l'),width:g('pe_w'),height:g('pe_h'),dim_unit:'inch',reorder_threshold:g('pe_thr'),image_url:g('pe_img'),active:document.getElementById('pe_active').checked});
+    await refreshCache(); var msg=document.getElementById('peMsg'); if(msg){msg.style.color='var(--green)';msg.textContent='Đã lưu ✓';}
+    setTimeout(function(){ go('products'); },600);
+  }catch(e){ var msg=document.getElementById('peMsg'); if(msg){msg.style.color='var(--red)';msg.textContent=e.message;} }
 }
 
 /* ====================================================================
@@ -1335,10 +1363,10 @@ async function saveSKU(){ var g=function(id){return document.getElementById(id).
 }
 
 /* ---- IMPORT DANH MỤC SKU TỪ CSV ---- */
-var SKU_TEMPLATE='sku_code,product_name,line,size,thickness,category,group,unit,length,width,height,reorder_threshold\n'+
-  '"MEDISPA HYBRID FIRM 13"" Mattress-TWIN","MEDISPA HYBRID FIRM 13"" Hybrid Mattress-TWIN",MEDISPA,TWIN,"13""",Mattress,Hybrid,ea,75,39,13,10\n'+
-  '"MEDISPA HYBRID PLUSH 14"" Mattress-QUEEN","MEDISPA HYBRID PLUSH 14"" Hybrid Mattress-QUEEN",MEDISPA,QUEEN,"14""",Mattress,Hybrid,ea,80,60,14,8\n'+
-  '"PRESIDENTIAL ULTRA 13"" Mattress-KING","PRESIDENTIAL ULTRA 13"" Hybrid Mattress-KING",PRESIDENTIAL,KING,"13""",Mattress,Premium,ea,80,76,13,6';
+var SKU_TEMPLATE='sku_code,product_name,line,size,thickness,category,unit,length,width,height,dim_unit,reorder_threshold,group\n'+
+  '"MEDISPA HYBRID FIRM 13"" Mattress-TWIN","MEDISPA HYBRID FIRM 13"" Hybrid Mattress-TWIN",MEDISPA,TWIN,"13""",Mattress,ea,75,39,13,inch,10,Hybrid\n'+
+  '"MEDISPA HYBRID PLUSH 14"" Mattress-QUEEN","MEDISPA HYBRID PLUSH 14"" Hybrid Mattress-QUEEN",MEDISPA,QUEEN,"14""",Mattress,ea,80,60,14,inch,8,Hybrid\n'+
+  '"PRESIDENTIAL ULTRA 13"" Mattress-KING","PRESIDENTIAL ULTRA 13"" Hybrid Mattress-KING",PRESIDENTIAL,KING,"13""",Mattress,ea,80,76,13,inch,6,Premium';
 function adminImportSKU(){
   document.getElementById('adminBody').innerHTML=
   '<div class="card p-5"><div class="font-semibold mb-1 text-slate-700">Import danh mục sản phẩm (SKU) từ CSV</div>'+
