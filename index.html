@@ -247,14 +247,15 @@ var CONFIG = { sessionKey:'as_wms_session', queueKey:'as_wms_offline_queue', cac
 var ROLES = {
   packer:  {label:'Đóng gói',  icon:'📦', home:'inbound',   nav:['inbound']},
   picker:  {label:'Thủ kho',   icon:'🚚', home:'outbound',  nav:['outbound','inventory']},
-  manager: {label:'Quản lý',   icon:'📊', home:'dashboard', nav:['dashboard','inventory','report','admin']},
-  admin:   {label:'Admin',     icon:'⚙️', home:'dashboard', nav:['dashboard','inbound','outbound','inventory','report','admin']}
+  manager: {label:'Quản lý',   icon:'📊', home:'dashboard', nav:['dashboard','inventory','orders','report','admin']},
+  admin:   {label:'Admin',     icon:'⚙️', home:'dashboard', nav:['dashboard','inbound','outbound','inventory','orders','report','admin']}
 };
 // nhóm menu sidebar + tiêu đề trang
 var NAV = {
   inbound:{label:'Đóng gói',icon:'📦',group:'VẬN HÀNH',sub:'Quét nhập kho & in tem QR'},
   outbound:{label:'Xuất hàng',icon:'🚚',group:'VẬN HÀNH',sub:'Loading & quét xuất theo SO'},
   inventory:{label:'Tồn kho',icon:'📋',group:'KHO',sub:'Tồn theo SKU'},
+  orders:{label:'Đơn hàng',icon:'🧾',group:'KHO',sub:'Xem chi tiết Sales Order (mọi cột)'},
   dashboard:{label:'Tổng quan',icon:'📊',group:'BÁO CÁO',sub:'KPI & xu hướng'},
   report:{label:'Báo cáo ngày',icon:'📈',group:'BÁO CÁO',sub:'Đóng gói & xuất hàng'},
   admin:{label:'Quản trị',icon:'⚙️',group:'HỆ THỐNG',sub:'SKU · User · Xe · Import'}
@@ -310,6 +311,8 @@ function ymdhms(){ var d=new Date(); return (''+d.getFullYear()).slice(2)+pad(d.
 function chk(r){ if(r.error) throw new Error(r.error.message||'Lỗi Supabase'); return r.data; }
 function numOrNull(v){ var n=parseFloat(v); return isNaN(n)?null:n; }
 function intOrNull(v){ var n=parseInt(v,10); return isNaN(n)?null:n; }
+function moneyNum(v){ var n=parseFloat(String(v).replace(/[^0-9.\-]/g,'')); return isNaN(n)?null:n; } // "$ 1,472.00" -> 1472
+function fmtMoney(n){ n=+n||0; return '$'+n.toLocaleString('en-US',{maximumFractionDigits:0}); }
 function val(arr,i){ return (i>=0 && i<arr.length)?String(arr[i]).trim():''; }
 var DIM_DIV={cm:1e6,mm:1e9,inch:61023.7,m:1};
 function computeVolume(L,W,H,unit){ L=parseFloat(L);W=parseFloat(W);H=parseFloat(H); if(!L||!W||!H) return ''; return Math.round(L*W*H/(DIM_DIV[unit||'cm']||1e6)*1000)/1000; }
@@ -394,7 +397,7 @@ async function api(action, p){
       var sos=headers.map(function(h){return h.so_number;});
       var lines=sos.length?chk(await sb.from('so_lines').select('*').in('so_number',sos))||[]:[];
       var bySo={}; lines.forEach(function(l){(bySo[l.so_number]=bySo[l.so_number]||[]).push(l);});
-      return { items: headers.map(function(h){ var ls=bySo[h.so_number]||[]; var ord=ls.reduce(function(s,l){return s+(+l.qty_ordered||0);},0); var shp=ls.reduce(function(s,l){return s+(+l.qty_shipped||0);},0); return {so_number:h.so_number,customer:h.customer,delivery_date:h.delivery_date,status:h.status,lines:ls.length,qty_ordered:ord,qty_shipped:shp,remaining:ord-shp}; }) };
+      return { items: headers.map(function(h){ var ls=bySo[h.so_number]||[]; var ord=ls.reduce(function(s,l){return s+(+l.qty_ordered||0);},0); var shp=ls.reduce(function(s,l){return s+(+l.qty_shipped||0);},0); return {so_number:h.so_number,customer:h.customer,delivery_date:h.delivery_date,status:h.status,lines:ls.length,qty_ordered:ord,qty_shipped:shp,remaining:ord-shp,amount:(+h.total_amount||0)}; }) };
     }
 
     case 'createLoading': {
@@ -484,23 +487,41 @@ async function api(action, p){
 
     case 'importSO': {
       var rw=parseCSV(p.csvText); if(!rw.length) throw new Error('CSV rỗng');
-      var hd=rw[0]; var MAP={so_number:'SO #',customer:'Customer',customer_po:'Customer PO',sales_person:'Sales Person',state:'State / Province',status:'Order Status',so_date:'Order Date Issued',delivery_date:'Order Date Scheduled',sku_code:'Product Number',product_name:'Description',qty_ordered:'Ordered Qty',qty_shipped:'Shipped Qty'};
+      // File ERP có vài dòng tiêu đề ở trên -> tự tìm dòng header chứa 'SO #'
+      var hdi=-1; for(var hh=0;hh<rw.length;hh++){ if((rw[hh]||[]).indexOf('SO #')>=0){ hdi=hh; break; } }
+      if(hdi<0) throw new Error('Không tìm thấy dòng tiêu đề có cột "SO #"');
+      var hd=rw[hdi];
+      var MAP={so_number:'SO #',customer:'Customer',customer_po:'Customer PO',sales_person:'Sales Person',state:'State / Province',so_class:'Class',location_group:'Location Group',status:'Order Status',so_date:'Order Date Issued',delivery_date:'Order Date Scheduled',fulfilled_date:'Order Date Fulfilled',sku_code:'Product Number',product_name:'Description',qty_ordered:'Ordered Qty',uom:'UOM',ordered_price:'Ordered Price',qty_shipped:'Shipped Qty',shipped_price:'Shipped Price',remaining_qty:'Remaining Qty',remaining_price:'Remaining Price',item_status:'Item Status',item_type:'Item Type',item_date_scheduled:'Item Date Scheduled',item_date_fulfilled:'Item Date Fulfilled'};
       var ix2={}; Object.keys(MAP).forEach(function(f){ix2[f]=hd.indexOf(MAP[f]);});
-      var soH={}, soL=[], skuSeen={};
-      for(var j=1;j<rw.length;j++){ var rr=rw[j]; if(!rr||!rr.length)continue; var so=val(rr,ix2.so_number),sku3=val(rr,ix2.sku_code); if(!so||!sku3)continue; var st=val(rr,ix2.status); if(st==='Estimate')continue;
-        if(!soH[so]) soH[so]={so_number:so,customer:val(rr,ix2.customer),customer_po:val(rr,ix2.customer_po),sales_person:val(rr,ix2.sales_person),state:val(rr,ix2.state),so_date:dateOrNull(val(rr,ix2.so_date)),delivery_date:dateOrNull(val(rr,ix2.delivery_date)),status:st||'Issued',created_by:session.username};
-        soL.push({so_number:so,sku_code:sku3,product_name:val(rr,ix2.product_name),qty_ordered:intOrNull(val(rr,ix2.qty_ordered))||0,qty_shipped:intOrNull(val(rr,ix2.qty_shipped))||0});
+      var soH={}, soL=[], skuSeen={}, soAmt={};
+      for(var j=hdi+1;j<rw.length;j++){ var rr=rw[j]; if(!rr||!rr.length)continue; var so=val(rr,ix2.so_number),sku3=val(rr,ix2.sku_code); if(!so||!sku3)continue; var st=val(rr,ix2.status); if(st==='Estimate')continue;
+        // raw = TOÀN BỘ cột A->Z của dòng này (header -> giá trị)
+        var raw={}; for(var ci=0;ci<hd.length;ci++){ var key=String(hd[ci]||'').trim(); if(key) raw[key]=val(rr,ci); }
+        var op=moneyNum(val(rr,ix2.ordered_price));
+        if(!soH[so]) soH[so]={so_number:so,customer:val(rr,ix2.customer),customer_po:val(rr,ix2.customer_po),sales_person:val(rr,ix2.sales_person),state:val(rr,ix2.state),so_class:val(rr,ix2.so_class),location_group:val(rr,ix2.location_group),so_date:dateOrNull(val(rr,ix2.so_date)),delivery_date:dateOrNull(val(rr,ix2.delivery_date)),fulfilled_date:dateOrNull(val(rr,ix2.fulfilled_date)),status:st||'Issued',created_by:session.username};
+        soAmt[so]=(soAmt[so]||0)+(op||0);
+        soL.push({so_number:so,sku_code:sku3,product_name:val(rr,ix2.product_name),qty_ordered:intOrNull(val(rr,ix2.qty_ordered))||0,qty_shipped:intOrNull(val(rr,ix2.qty_shipped))||0,uom:val(rr,ix2.uom),ordered_price:op,shipped_price:moneyNum(val(rr,ix2.shipped_price)),remaining_qty:intOrNull(val(rr,ix2.remaining_qty)),remaining_price:moneyNum(val(rr,ix2.remaining_price)),item_status:val(rr,ix2.item_status),item_type:val(rr,ix2.item_type),item_date_scheduled:dateOrNull(val(rr,ix2.item_date_scheduled)),item_date_fulfilled:dateOrNull(val(rr,ix2.item_date_fulfilled)),raw:raw});
         if(!skuSeen[sku3]) skuSeen[sku3]=val(rr,ix2.product_name);
       }
       var soArr=Object.keys(soH);
+      soArr.forEach(function(s){ soH[s].total_amount=Math.round((soAmt[s]||0)*100)/100; });
       for(var a=0;a<soArr.length;a+=400){ chk(await sb.from('sales_orders').upsert(soArr.slice(a,a+400).map(function(s){return soH[s];}))); }
       for(var d=0;d<soArr.length;d+=100){ chk(await sb.from('so_lines').delete().in('so_number',soArr.slice(d,d+100))); }
-      for(var e=0;e<soL.length;e+=400){ chk(await sb.from('so_lines').insert(soL.slice(e,e+400))); }
+      for(var e=0;e<soL.length;e+=300){ chk(await sb.from('so_lines').insert(soL.slice(e,e+300))); }
       var ex2={}; (chk(await sb.from('master_sku').select('sku_code'))||[]).forEach(function(s){ex2[s.sku_code]=true;});
       var newSk=Object.keys(skuSeen).filter(function(s){return !ex2[s];}).map(function(s){return {sku_code:s,product_name:skuSeen[s],unit:'ea',dim_unit:'cm',active:true};});
       for(var f=0;f<newSk.length;f+=400){ chk(await sb.from('master_sku').insert(newSk.slice(f,f+400))); }
       await audit(session.username,'import_so','SO='+soArr.length+' lines='+soL.length+' newsku='+newSk.length);
       return {added_so:soArr.length,added_lines:soL.length,added_sku:newSk.length,total_so:soArr.length};
+    }
+    case 'getOrders': {
+      var rows=chk(await sb.from('sales_orders').select('so_number,customer,status,delivery_date,total_amount').order('so_number',{ascending:false}))||[];
+      return {items:rows};
+    }
+    case 'getOrderLines': {
+      var lines=chk(await sb.from('so_lines').select('*').eq('so_number',p.so_number))||[];
+      var hdr=(chk(await sb.from('sales_orders').select('*').eq('so_number',p.so_number))||[])[0]||{};
+      return {header:hdr, lines:lines};
     }
 
     case 'reportInbound': {
@@ -627,7 +648,7 @@ function go(view){
   document.getElementById('pageTitle').textContent=NAV[view].label;
   document.getElementById('pageSub').textContent=NAV[view].sub;
   var m=document.getElementById('main'); m.innerHTML='<div class="text-center text-slate-400 py-12">Đang tải…</div>';
-  ({inbound:viewInbound,outbound:viewOutbound,inventory:viewInventory,dashboard:viewDashboard,report:viewReport,admin:viewAdmin}[view]||viewInbound)(m);
+  ({inbound:viewInbound,outbound:viewOutbound,inventory:viewInventory,orders:viewOrders,dashboard:viewDashboard,report:viewReport,admin:viewAdmin}[view]||viewInbound)(m);
 }
 
 /* ====================================================================
@@ -844,7 +865,7 @@ function renderSOpick(list){
     var row=document.createElement('label'); row.className='flex items-center gap-3 px-3 py-3 rounded-xl cursor-pointer'; row.style.borderBottom='1px solid var(--line)';
     row.innerHTML='<input type="checkbox" class="soChk" value="'+s.so_number+'" onchange="recalcEst()" style="width:22px;height:22px;accent-color:var(--navy)">'+
       '<div class="flex-1"><div class="font-semibold">'+s.so_number+' · '+s.customer+'</div>'+
-      '<div class="text-sm text-slate-500">Giao '+(s.delivery_date||'-')+' · '+s.qty_ordered+' cái · '+s.lines+' dòng</div></div>';
+      '<div class="text-sm text-slate-500">Giao '+(s.delivery_date||'-')+' · '+s.qty_ordered+' cái · '+s.lines+' dòng'+(s.amount?(' · <b style="color:var(--green)">'+fmtMoney(s.amount)+'</b>'):'')+'</div></div>';
     c.appendChild(row);
   });
 }
@@ -973,6 +994,43 @@ function renderInv(){
       '<td class="text-center"><b style="color:'+(low?'var(--red)':'var(--navy)')+';font-size:16px">'+r.in_stock+'</b></td>'+
       '<td class="text-center">'+r.shipped+'</td><td class="text-center">'+r.created+'</td><td class="text-center text-slate-500">'+(r.vol||'-')+'</td></tr>';
   }).join('')||'<tr><td colspan="6" class="text-center text-slate-400 py-8">Không có dữ liệu</td></tr>';
+}
+
+/* ====================================================================
+ * 4b. ĐƠN HÀNG (SO) — xem chi tiết mọi cột
+ * ==================================================================== */
+var _ordersAll=[];
+async function viewOrders(m){
+  m.innerHTML='<div class="flex flex-wrap gap-2 mb-3"><input id="ordSearch" class="field" style="flex:1;min-width:200px" placeholder="🔍 Tìm SO / khách hàng..." oninput="renderOrders()"></div><div id="ordList" class="space-y-2"></div>';
+  document.getElementById('ordList').innerHTML='<div class="text-center text-slate-400 py-8">Đang tải…</div>';
+  try{ _ordersAll=(await api('getOrders')).items; }catch(e){ document.getElementById('ordList').innerHTML='<div class="card p-4">'+e.message+'</div>'; return; }
+  if(currentView==='orders') renderOrders();
+}
+function renderOrders(){
+  var q=(document.getElementById('ordSearch').value||'').toLowerCase();
+  var rows=_ordersAll.filter(function(o){return (o.so_number+' '+(o.customer||'')).toLowerCase().indexOf(q)>=0;}).slice(0,200);
+  var st=document.getElementById('ordList'); if(!st) return;
+  if(!rows.length){ st.innerHTML='<div class="card p-6 text-center text-slate-400">Không có đơn (hãy Import SO)</div>'; return; }
+  st.innerHTML=rows.map(function(o){
+    var col=o.status==='Fulfilled'?'#16a34a':(o.status==='Estimate'?'#94a3b8':'#1e40af');
+    return '<div class="card p-4 cursor-pointer" onclick="openOrder(\''+String(o.so_number).replace(/'/g,'')+'\')">'+
+      '<div class="flex items-center justify-between"><div class="font-bold">'+o.so_number+'</div><div class="font-bold" style="color:var(--green)">'+fmtMoney(o.total_amount)+'</div></div>'+
+      '<div class="text-sm text-slate-500 mt-1">'+(o.customer||'')+' · <span class="pill" style="background:'+col+';color:#fff">'+(o.status||'')+'</span> · giao '+(o.delivery_date||'-')+'</div></div>';
+  }).join('');
+}
+async function openOrder(so){
+  var m=document.getElementById('main'); m.innerHTML='<div class="text-center text-slate-400 py-10">Đang tải…</div>';
+  var d; try{ d=await api('getOrderLines',{so_number:so}); }catch(e){ m.innerHTML='<div class="card p-4">'+e.message+'</div>'; return; }
+  var h=d.header||{}, lines=d.lines||[];
+  // gom mọi cột từ raw (A->Z) -> bảng động, file thêm cột sau cũng tự hiện
+  var cols=[]; lines.forEach(function(l){ if(l.raw) Object.keys(l.raw).forEach(function(k){ if(cols.indexOf(k)<0) cols.push(k); }); });
+  var thead=cols.map(function(c){return '<th>'+c+'</th>';}).join('');
+  var body=lines.map(function(l){ var r=l.raw||{}; return '<tr>'+cols.map(function(c){return '<td>'+(r[c]!=null?String(r[c]):'')+'</td>';}).join('')+'</tr>'; }).join('');
+  m.innerHTML=
+  '<button class="btn btn-ghost mb-4" onclick="go(\'orders\')">← Danh sách đơn</button>'+
+  '<div class="card p-5 mb-3"><div class="flex justify-between items-center"><div class="sectiontitle">'+so+'</div><div class="num" style="font-size:24px;color:var(--green)">'+fmtMoney(h.total_amount)+'</div></div>'+
+    '<div class="text-sm text-slate-500 mt-1">'+(h.customer||'')+' · '+(h.status||'')+' · giao '+(h.delivery_date||'-')+' · '+lines.length+' dòng</div></div>'+
+  '<div class="card overflow-auto"><div class="font-semibold p-3 pb-1 text-slate-700">Chi tiết — tất cả cột</div><table style="white-space:nowrap"><thead><tr>'+(thead||'<th>(trống)</th>')+'</tr></thead><tbody>'+(body||'<tr><td class="text-slate-400">Đơn này import trước khi bật lưu đầy đủ — hãy Import lại file để có mọi cột</td></tr>')+'</tbody></table></div>';
 }
 
 /* ====================================================================
