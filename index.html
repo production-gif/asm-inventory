@@ -296,7 +296,7 @@ function mountLogos(){
 /* ================= SUPABASE — lớp dữ liệu (thay Apps Script) ================= */
 // URL nhúng sẵn. Anon key: dán sẵn vào đây cho mọi máy, HOẶC để trống -> app hỏi 1 lần ở màn cấu hình.
 var SUPABASE_URL = 'https://otdvrdcyhynbwpiiuyfm.supabase.co';
-var SUPABASE_ANON_KEY = '';            // <-- dán anon public key vào đây nếu muốn nhúng sẵn cho tất cả
+var SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im90ZHZyZGN5aHluYndwaWl1eWZtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIzMDAwMTMsImV4cCI6MjA5Nzg3NjAxM30.Nk9fb0oeOHGh26Ent7015YMIZFuTuskasugpNtnSPuU';            // <-- anon public key (nhúng sẵn cho tất cả máy)
 var PIN_SALT = 'AMERICAN-STAR-WMS';    // phải khớp với hash trong supabase-schema.sql
 var sb = null;
 function anonKey(){ return SUPABASE_ANON_KEY || localStorage.getItem('as_anon') || ''; }
