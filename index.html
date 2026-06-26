@@ -548,7 +548,16 @@ async function api(action, p){
       chk(await sb.from('loadings').delete().eq('loading_id',p.loading_id));
       await audit(session.username,'delete_loading',p.loading_id); return {deleted:true,reverted:oks.length};
     }
-    case 'getLoadings': return { items: chk(await sb.from('loadings').select('*').order('created_at',{ascending:false}))||[] };
+    case 'getLoadings': {
+      var lds=chk(await sb.from('loadings').select('*').order('created_at',{ascending:false}))||[];
+      // Tính tổng SỐ LƯỢNG (qty_ordered) + TIỀN (total_amount) cho từng loading theo các SO của nó
+      var allSo={}; lds.forEach(function(l){ String(l.so_list||'').split(',').filter(Boolean).forEach(function(s){ allSo[s]=1; }); });
+      var soList=Object.keys(allSo), amtMap={}, qtyMap={};
+      for(var gi=0;gi<soList.length;gi+=200){ (chk(await sb.from('sales_orders').select('so_number,total_amount').in('so_number',soList.slice(gi,gi+200)))||[]).forEach(function(h){ amtMap[h.so_number]=+h.total_amount||0; }); }
+      for(var gj=0;gj<soList.length;gj+=200){ (chk(await sb.from('so_lines').select('so_number,qty_ordered').in('so_number',soList.slice(gj,gj+200)))||[]).forEach(function(l){ qtyMap[l.so_number]=(qtyMap[l.so_number]||0)+(+l.qty_ordered||0); }); }
+      lds.forEach(function(l){ var sos=String(l.so_list||'').split(',').filter(Boolean), amt=0, qty=0; sos.forEach(function(s){ amt+=amtMap[s]||0; qty+=qtyMap[s]||0; }); l.amount=Math.round(amt*100)/100; l.qty=qty; });
+      return { items: lds };
+    }
 
     case 'getLoading': {
       var L=(chk(await sb.from('loadings').select('*').eq('loading_id',p.loading_id))||[])[0];
@@ -1312,19 +1321,31 @@ function renderLdFilter(){
 function paintLoadings(lds){
   var list=document.getElementById('loadingList'); if(!list) return; list.innerHTML='';
   if(!lds.length){ list.innerHTML='<div class="card p-8 text-center text-slate-400">Không có loading phù hợp.</div>'; return; }
-  lds.forEach(function(l){
-    var pct=l.fill_percent||0, bc=pct>100?'var(--red)':(pct>90?'var(--amber)':'var(--green)');
-    var st=l.status==='done'?'<span class="pill" style="background:#dcfce7;color:#166534">Hoàn tất</span>':'<span class="pill" style="background:#dbeafe;color:#1e40af">Đang xếp</span>';
-    var d=document.createElement('div'); d.className='card p-4';
-    d.innerHTML='<div class="flex items-start gap-3">'+
-      '<input type="checkbox" class="ldChk" value="'+l.loading_id+'" style="width:20px;height:20px;margin-top:3px;accent-color:var(--red)" onclick="event.stopPropagation()">'+
-      '<div class="flex-1 cursor-pointer" onclick="openLoading(\''+l.loading_id+'\')">'+
-        '<div class="flex items-center justify-between"><div class="font-bold">'+l.loading_id+'</div>'+st+'</div>'+
-        '<div class="text-sm text-slate-500 mt-1">SO: '+(l.so_list||'-')+'</div>'+
-        '<div class="text-sm text-slate-500">Xe: '+(l.vehicle_id||'-')+' · '+(l.total_volume_m3||0)+'/'+(l.capacity_m3||0)+' m³ · '+(l.loading_date||'')+'</div>'+
-        '<div style="background:var(--track);border-radius:999px;height:8px;margin-top:8px;overflow:hidden"><div style="height:100%;width:'+Math.min(pct,100)+'%;background:'+bc+'"></div></div>'+
-      '</div></div>';
-    list.appendChild(d);
+  // Gom theo NGÀY (loading_date), mỗi ngày 1 tiêu đề: số loading · tổng SL · tổng tiền
+  var byDay={}, order=[]; lds.forEach(function(l){ var d=l.loading_date||'—'; if(!byDay[d]){ byDay[d]=[]; order.push(d); } byDay[d].push(l); });
+  order.sort().reverse();
+  order.forEach(function(day){
+    var arr=byDay[day], n=arr.length;
+    var sumQty=arr.reduce(function(a,l){return a+(+l.qty||0);},0);
+    var sumAmt=arr.reduce(function(a,l){return a+(+l.amount||0);},0);
+    var hdr=document.createElement('div'); hdr.className='flex items-center justify-between flex-wrap gap-1 px-1 mt-4 mb-1';
+    hdr.innerHTML='<div class="font-bold" style="color:var(--navy)">📅 '+day+'</div>'+
+      '<div class="text-sm text-slate-500">'+n+' loading · SL <b style="color:var(--navy)">'+sumQty+'</b> · <b style="color:var(--green)">'+fmtMoney(sumAmt)+'</b></div>';
+    list.appendChild(hdr);
+    arr.forEach(function(l){
+      var pct=l.fill_percent||0, bc=pct>100?'var(--red)':(pct>90?'var(--amber)':'var(--green)');
+      var st=l.status==='done'?'<span class="pill" style="background:#dcfce7;color:#166534">Hoàn tất</span>':'<span class="pill" style="background:#dbeafe;color:#1e40af">Đang xếp</span>';
+      var d=document.createElement('div'); d.className='card p-4';
+      d.innerHTML='<div class="flex items-start gap-3">'+
+        '<input type="checkbox" class="ldChk" value="'+l.loading_id+'" style="width:20px;height:20px;margin-top:3px;accent-color:var(--red)" onclick="event.stopPropagation()">'+
+        '<div class="flex-1 cursor-pointer" onclick="openLoading(\''+l.loading_id+'\')">'+
+          '<div class="flex items-center justify-between"><div class="font-bold">'+l.loading_id+'</div>'+st+'</div>'+
+          '<div class="text-sm text-slate-500 mt-1">SO: '+(l.so_list||'-')+'</div>'+
+          '<div class="text-sm text-slate-500">Xe: '+(l.vehicle_id||'-')+' · '+(l.total_volume_m3||0)+'/'+(l.capacity_m3||0)+' m³ · SL '+(l.qty||0)+' · <b style="color:var(--green)">'+fmtMoney(l.amount||0)+'</b></div>'+
+          '<div style="background:var(--track);border-radius:999px;height:8px;margin-top:8px;overflow:hidden"><div style="height:100%;width:'+Math.min(pct,100)+'%;background:'+bc+'"></div></div>'+
+        '</div></div>';
+      list.appendChild(d);
+    });
   });
 }
 function toggleAllLd(btn){ var on=btn.textContent.indexOf('Chọn tất cả')>=0; [].forEach.call(document.querySelectorAll('.ldChk'),function(c){c.checked=on;}); btn.textContent=on?'Bỏ chọn':'Chọn tất cả'; }
