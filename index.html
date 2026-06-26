@@ -237,6 +237,10 @@
 
     <!-- PANEL PHẢI: form đăng nhập -->
     <div class="login-panel">
+      <div style="display:flex;justify-content:flex-end;gap:6px;margin-bottom:8px">
+        <button class="langbtn btn btn-ghost" data-l="en" onclick="setLang('en')" style="min-height:34px;padding:0 13px;font-size:13px;border-radius:9px">EN</button>
+        <button class="langbtn btn btn-ghost" data-l="vi" onclick="setLang('vi')" style="min-height:34px;padding:0 13px;font-size:13px;border-radius:9px">VI</button>
+      </div>
       <div id="loginLogo" class="login-mobile-logo"></div>
       <div class="lp-title">Đăng nhập ca làm việc</div>
       <div class="lp-sub">Chọn vai trò và nhập mã PIN để bắt đầu.</div>
@@ -267,6 +271,7 @@
         <div id="avatar" class="w-9 h-9 rounded-full flex items-center justify-center font-bold text-white" style="background:var(--red)"></div>
         <div class="leading-tight"><div id="sbUser" class="text-white font-semibold text-sm"></div><div id="sbRole" class="text-xs" style="color:var(--sidebar-group)"></div></div>
       </div>
+      <div class="seg"><button class="langbtn" data-l="en" onclick="setLang('en')">EN</button><button class="langbtn" data-l="vi" onclick="setLang('vi')">VI</button></div>
       <div class="seg"><button id="thLight" onclick="setTheme('light')">☀ Sáng</button><button id="thDark" onclick="setTheme('dark')">🌙 Tối</button></div>
       <button onclick="logout()" class="w-full text-left px-3 py-2 rounded-xl text-sm font-semibold" style="color:#fca5a5;background:rgba(255,255,255,.05)">⎋ Đăng xuất</button>
     </div>
@@ -721,9 +726,225 @@ async function api(action, p){
   }
 }
 
+/* ====================================================================
+ * I18N — SONG NGỮ EN/VI (mặc định English; nhớ lựa chọn theo trình duyệt)
+ * Cơ chế: dịch ngay trên DOM đã render qua từ điển 2 chiều -> KHÔNG đụng
+ * vào logic/dữ liệu. Mỗi mục [vi, en]; nhận diện text theo cả 2 ngôn ngữ
+ * rồi xuất ra theo LANG hiện tại (đảo chiều được, idempotent).
+ * ==================================================================== */
+var LANG = localStorage.getItem('as_lang') || 'en';
+var I18N_PAIRS = [
+  /* Đăng nhập / cấu hình */
+  ['Hệ thống quản lý kho thông minh — quét QR, kiểm soát xuất / nhập / tồn theo thời gian thực.','Smart warehouse management — scan QR, control in/out/stock in real time.'],
+  ['Quét QR nhập – xuất ngay trên điện thoại','Scan QR for inbound/outbound on your phone'],
+  ['Xếp xe theo m³ & 7 điểm chặn xuất hàng','Load by m³ & 7-point outbound checks'],
+  ['Dashboard & báo cáo vận hành tức thì','Dashboard & instant operations reports'],
+  ['Hệ thống trực tuyến · Bảo mật nội bộ','System online · Internal security'],
+  ['Đăng nhập ca làm việc','Sign in to your shift'],
+  ['Chọn vai trò và nhập mã PIN để bắt đầu.','Select a role and enter your PIN to start.'],
+  ['Vai trò','Role'],['Tên đăng nhập','Username'],
+  ['ĐĂNG NHẬP — VÀO CA','SIGN IN — START SHIFT'],
+  ['⚙ Đổi khóa Supabase','⚙ Change Supabase key'],
+  ['Nhập tài khoản và PIN','Enter username and PIN'],
+  ['Chưa cấu hình khóa Supabase','Supabase key not configured'],
+  ['Dán anon public key (chuỗi dài bắt đầu eyJ...)','Paste the anon public key (long string starting eyJ...)'],
+  ['Đang kiểm tra kết nối...','Checking connection...'],
+  ['Kết nối Supabase OK ✓','Supabase connection OK ✓'],
+  /* Vai trò */
+  ['Đóng gói','Packing'],['Thủ kho','Warehouse'],['Quản lý','Manager'],['Admin','Admin'],
+  /* NAV: nhãn / mô tả / nhóm */
+  ['Xuất hàng','Outbound'],['Tồn kho','Inventory'],['Sản phẩm','Products'],['Đơn hàng','Orders'],
+  ['Tổng quan','Overview'],['Báo cáo ngày','Daily report'],['Quản trị','Admin'],
+  ['Quét nhập kho & in tem QR','Scan inbound & print QR labels'],
+  ['Loading & quét xuất theo SO','Loading & scan outbound by SO'],
+  ['Tồn theo SKU','Stock by SKU'],['Danh mục sản phẩm','Product catalog'],
+  ['Xem chi tiết Sales Order (mọi cột)','View Sales Order detail (all columns)'],
+  ['KPI & xu hướng','KPIs & trends'],['Đóng gói & xuất hàng','Packing & outbound'],
+  ['SKU · User · Xe · Import','SKU · User · Vehicle · Import'],
+  ['VẬN HÀNH','OPERATIONS'],['KHO','WAREHOUSE'],['BÁO CÁO','REPORTS'],['HỆ THỐNG','SYSTEM'],
+  /* Chung */
+  ['Đang tải…','Loading…'],['Đang tải loading…','Loading…'],['Đang tải đơn…','Loading orders…'],
+  ['Đang đọc file…','Reading file…'],['Đang lưu…','Saving…'],
+  ['Chọn tất cả','Select all'],['Bỏ chọn','Deselect all'],
+  ['🗑 Xóa chọn','🗑 Delete selected'],['🗑 Xóa','🗑 Delete'],['Xóa','Delete'],['Sửa','Edit'],
+  ['✏ Sửa SO/Xe','✏ Edit SO/Vehicle'],['← Quay lại','← Back'],['← Danh mục','← Catalog'],
+  ['← Danh sách loading','← Loading list'],['← Danh sách đơn','← Order list'],
+  ['Không có','None'],['Chưa có','None yet'],['Không có dữ liệu','No data'],['Không có SKU','No SKU'],
+  ['cái','pcs'],['m³/cái','m³/pc'],['dòng','lines'],['đơn','orders'],['ngày làm việc','work day'],
+  ['hoạt động','active'],['khóa','locked'],['chờ','pending'],['lệch','off'],['đang đồng bộ','syncing'],
+  ['trạng thái mạng','network status'],['· cập nhật','· updated'],['gần nhất','latest'],
+  /* Đơn hàng */
+  ['Đơn hàng (Sales Order)','Orders (Sales Order)'],['Tạo đơn','New order'],['Tạo đơn hàng mới','Create new order'],
+  ['🔍 SO / khách','🔍 SO / customer'],['Mọi trạng thái','All statuses'],['Mọi bang','All states'],
+  ['Mọi NV bán','All salespeople'],['Giao từ','Delivery from'],['Giao đến','Delivery to'],
+  ['Không có đơn phù hợp','No matching orders'],['đơn · tổng tiền','orders · total'],
+  ['Chi tiết — tất cả cột','Detail — all columns'],['(trống)','(empty)'],
+  ['Đơn này import trước khi bật lưu đầy đủ — hãy Import lại file để có mọi cột','This order was imported before full-column saving — re-import the file to get all columns'],
+  ['Thông tin đơn','Order info'],['Dòng hàng','Line items'],['SO # (mã đơn)','SO # (order no.)'],
+  ['Khách hàng','Customer'],['NV bán','Salesperson'],['Bang (State)','State'],['Class','Class'],
+  ['Location Group','Location Group'],['Ngày đặt','Order date'],['Ngày giao','Delivery date'],
+  ['Trạng thái','Status'],['➕ Thêm dòng','➕ Add line'],['💾 Lưu đơn hàng','💾 Save order'],
+  ['Tên sản phẩm','Product name'],['Đơn giá','Unit price'],['Thành tiền','Amount'],['ĐVT','UoM'],
+  ['Hãy nhập SO # (mã đơn)','Please enter SO # (order no.)'],
+  ['Đơn cần ít nhất 1 dòng có mã SKU','Order needs at least 1 line with a SKU'],
+  /* Tồn kho */
+  ['Loại SKU','SKU types'],['Tổng tồn','Total stock'],['Sắp hết','Low stock'],
+  ['🔍 Tìm SKU...','🔍 Find SKU...'],['Tồn (sửa được)','Stock (editable)'],
+  ['Cộng tồn thủ công cho SKU','Manually add stock for SKU'],['➕ Cộng tồn','➕ Add stock'],
+  ['✓ ĐÃ CỘNG TỒN','✓ STOCK ADDED'],['✓ Thêm','✓ Add'],['Không thêm được','Cannot add'],
+  /* Sản phẩm */
+  ['🔍 Tìm SKU / tên / dòng...','🔍 Find SKU / name / line...'],['Mọi Group','All groups'],
+  ['Bấm vào 1 dòng để sửa thông tin SKU.','Click a row to edit SKU info.'],
+  ['Trống — hãy Import SKU','Empty — please Import SKU'],['Sửa sản phẩm','Edit product'],
+  ['Mã SKU (mã QR — không sửa)','SKU code (QR — read-only)'],['Dòng','Line'],['Độ dày','Thickness'],
+  ['Loại (category)','Category'],['Dài (inch)','Length (inch)'],['Rộng','Width'],['Cao','Height'],
+  ['Ngưỡng tồn','Reorder threshold'],['URL ảnh (tùy chọn)','Image URL (optional)'],
+  ['💾 Lưu thay đổi','💾 Save changes'],['LƯU THAY ĐỔI','SAVE CHANGES'],['Đã lưu ✓','Saved ✓'],
+  ['Sản phẩm','Products'],['Loại','Type'],['✏ Sửa','✏ Edit'],
+  /* Dashboard */
+  ['Nhập hôm nay','In today'],['Xuất hôm nay','Out today'],['SO đang xử lý','Open SOs'],
+  ['Nhập vs Xuất (30 ngày)','In vs Out (30 days)'],['Top 10 SKU bán chạy','Top 10 best-selling SKUs'],
+  ['Nhập','In'],['Xuất','Out'],
+  /* Báo cáo ngày */
+  ['Tổng đóng gói','Total packed'],['Tổng xuất','Total shipped'],['Theo công nhân','By worker'],
+  ['Người đóng gói','Packer'],['Đối chiếu SO vs Thực xuất','SO vs Actual shipped'],
+  ['Cảnh báo theo loại lỗi','Alerts by error type'],['Chưa có lượt xuất','No outbound yet'],
+  ['Quét/Cần','Scanned/Needed'],['Yêu cầu','Required'],['Đã xuất','Shipped'],['Chênh','Diff'],
+  ['Đủ','OK'],['THIẾU','SHORT'],['KHỚP','MATCH'],['Ngày','Date'],
+  /* Xuất hàng / Loading */
+  ['📷 QUÉT XUẤT HÀNG','📷 SCAN OUTBOUND'],['Danh sách Loading','Loading list'],
+  ['Tạo Loading','New loading'],['Tạo loading','New loading'],['Tạo Loading mới','Create new loading'],
+  ['Xóa loading','Delete loading'],['Ngày xuất (loading date)','Ship date (loading date)'],
+  ['— chưa có xe, thêm ở Quản trị —','— no vehicles, add in Admin —'],
+  ['Chọn ít nhất 1 SO','Select at least 1 SO'],['LƯU LOADING','SAVE LOADING'],
+  ['✓ ĐÃ LƯU LOADING','✓ LOADING SAVED'],['✓ ĐÃ XÓA','✓ DELETED'],
+  ['Mở lại từ danh sách để quét khi xuất hàng','Reopen from the list to scan when shipping'],
+  ['Đã xếp','Loaded'],['Đang xếp','Loading'],['Chưa tải được loading','Could not load loading'],
+  ['Không có loading phù hợp.','No matching loadings.'],['Không có SO cần xuất','No SOs to ship'],
+  ['Tổng thể tích (theo đơn)','Total volume (by order)'],['· sức chứa xe','· vehicle capacity'],
+  ['Đã chọn','Selected'],['✓ Loading đã hoàn tất','✓ Loading completed'],['Hoàn tất','Complete'],
+  ['✓ HOÀN TẤT','✓ DONE'],['✓ HOÀN TẤT LOADING','✓ LOADING DONE'],
+  ['Hoàn tất (chưa đủ số lượng)','Complete (qty not met)'],
+  ['Hoàn tất loading này? Sẽ cập nhật SO và tồn kho.','Complete this loading? It will update SOs and stock.'],
+  /* Chặn quét xuất */
+  ['SAI SKU — không thuộc các đơn trong loading','WRONG SKU — not in this loading'],
+  ['SAI SKU — Sản phẩm này KHÔNG thuộc các đơn trong loading','WRONG SKU — this product is NOT in the loading orders'],
+  ['ĐÃ ĐỦ SỐ LƯỢNG','QUANTITY MET'],['ĐÃ ĐỦ SỐ LƯỢNG SKU NÀY','THIS SKU QTY MET'],
+  ['VƯỢT TỒN KHO','EXCEEDS STOCK'],['MÃ QR KHÔNG HỢP LỆ','INVALID QR'],
+  ['MÃ QR KHÔNG HỢP LỆ — SKU không có trong danh mục','INVALID QR — SKU not in catalog'],
+  ['MÃ QR KHÔNG HỢP LỆ — sản phẩm không có trong hệ thống','INVALID QR — product not in system'],
+  ['HẾT TỒN — SKU này chưa có hàng đóng gói','OUT OF STOCK — this SKU has no packed goods'],
+  ['HẾT TỒN — SKU này chưa có hàng đóng gói trong kho','OUT OF STOCK — no packed goods for this SKU'],
+  ['HẾT TỒN / CHƯA ĐÓNG GÓI','OUT OF STOCK / NOT PACKED'],['SKU BỊ VÔ HIỆU','SKU DISABLED'],
+  ['SKU đã bị vô hiệu hóa','SKU has been disabled'],['SKU không thuộc loading này','SKU not in this loading'],
+  ['OK ✓ — QUÉT TẤM TIẾP','OK ✓ — SCAN NEXT'],['TỪ CHỐI','REJECTED'],['LỖI','ERROR'],
+  ['MẤT KẾT NỐI','CONNECTION LOST'],['Khâu xuất cần mạng. Vui lòng kết nối lại.','Outbound needs internet. Please reconnect.'],
+  ['ĐÃ HIỂU — TIẾP TỤC','GOT IT — CONTINUE'],['SO123','SO123'],
+  /* Đóng gói / Inbound */
+  ['Quét QR — Nhập kho','Scan QR — Inbound'],['✓ ĐÃ GHI','✓ RECORDED'],['Chọn SKU','Select SKU'],
+  ['Chọn SKU để xem trước','Select a SKU to preview'],['Xem trước tem (đúng như khi in)','Label preview (as printed)'],
+  ['Khổ tem mặc định','Default label size'],['Dòng chữ thêm (tùy chọn)','Extra text (optional)'],
+  ['⬇ Tải file mẫu (template) CSV','⬇ Download template CSV'],['⚠ CHƯA LƯU ĐƯỢC','⚠ NOT SAVED'],
+  ['Chưa ghi được lượt quét — đã hoàn tác. Quét lại khi có mạng.','Scan not recorded — rolled back. Rescan when online.'],
+  ['Không có trong danh mục (offline)','Not in catalog (offline)'],['Tồn mới:','New stock:'],
+  ['Tổng hôm nay:','Today total:'],['Bỏ qua:','Skipped:'],['Cần HTTPS và cấp quyền camera.','Needs HTTPS and camera permission.'],
+  ['Không mở được camera','Cannot open camera'],['LỖI CAMERA','CAMERA ERROR'],['(đang trong loading)','(in loading)'],
+  /* Quản trị */
+  ['Import danh mục','Import catalog'],['Import danh mục sản phẩm (SKU) từ CSV','Import product catalog (SKU) from CSV'],
+  ['Import Sales Order từ CSV','Import Sales Order from CSV'],['Lưu SKU','Save SKU'],['Lưu user','Save user'],
+  ['Lưu xe','Save vehicle'],['Lưu cài đặt','Save settings'],
+  ['Thêm / Sửa SKU (kèm kích thước để tính m³)','Add / Edit SKU (with dimensions for m³)'],
+  ['Thêm / Sửa user','Add / Edit user'],['Thêm xe','Add vehicle'],['Cài đặt','Settings'],
+  ['Ngưỡng tồn cảnh báo (mặc định)','Low-stock alert threshold (default)'],
+  ['Tiền tố QR (thường để trống)','QR prefix (usually empty)'],['Tên công ty','Company name'],
+  ['Chọn file CSV','Choose CSV file'],['Chưa có xe','No vehicles'],['Size / độ dày','Size / thickness'],
+  ['Mã SKU','SKU code'],['Import SKU','Import SKU'],['Xe','Vehicle'],['User','User'],['Import SO','Import SO'],
+  /* Lỗi backend (ném ra, hiển thị qua catch) */
+  ['CSV rỗng','CSV is empty'],['Thiếu cột bắt buộc "sku_code"','Missing required column "sku_code"'],
+  ['Không tìm thấy dòng tiêu đề có cột "SO #"','Header row with "SO #" not found'],
+  ['Loading không tồn tại','Loading does not exist'],['Không tìm thấy loading','Loading not found'],
+  ['Loading đã hoàn tất, không sửa được','Loading completed, cannot edit'],
+  ['Loading đã hoàn tất, không xóa được','Loading completed, cannot delete'],
+  ['Tài khoản không tồn tại','Account does not exist'],['Tài khoản đã khóa','Account is locked'],
+  ['Lỗi Supabase','Supabase error'],['Thiếu SO # (mã đơn)','Missing SO # (order no.)'],
+  ['Đơn cần ít nhất 1 dòng hàng','Order needs at least 1 line'],
+  ['Không có dòng hàng hợp lệ (thiếu mã SKU)','No valid line items (missing SKU)'],
+  ['Không tìm thấy SKU','SKU not found'],['Nhập số lượng khác 0','Enter a non-zero quantity'],
+  ['Hãy tích chọn loading cần xóa','Please select loadings to delete'],
+  ['Hãy tích chọn đơn cần xóa','Please select orders to delete'],
+  /* Trạng thái đơn (giá trị gốc tiếng Anh -> hiển thị vi khi cần) */
+  ['Đã phát hành','Issued'],['Đang xử lý','In Progress'],['Đã giao đủ','Fulfilled'],['Báo giá','Estimate']
+];
+var _viMap={}, _enMap={};
+I18N_PAIRS.forEach(function(p){ if(_viMap[p[0]]==null)_viMap[p[0]]=p[1]; if(_enMap[p[1]]==null)_enMap[p[1]]=p[0]; });
+// Mẫu động cho EN (có số/biến) — chỉ áp dụng khi LANG='en'
+var I18N_PATTERNS=[
+  [/^⚠ SKU sắp hết \((\d+)\)$/, function(m){return '⚠ Low-stock SKUs ('+m[1]+')';}],
+  [/^⏰ SO quá hạn \((\d+)\)$/, function(m){return '⏰ Overdue SOs ('+m[1]+')';}],
+  [/^Hiện (\d+)\/(\d+) — lọc thêm để thu hẹp$/, function(m){return 'Showing '+m[1]+'/'+m[2]+' — filter to narrow';}],
+  [/^Đã xóa (\d+) đơn$/, function(m){return 'Deleted '+m[1]+' orders';}],
+  [/^Đã chọn (\d+):$/, function(m){return 'Selected '+m[1]+':';}],
+  [/^2 · Chọn SO để xếp \((\d+)\)$/, function(m){return '2 · Choose SOs to load ('+m[1]+')';}],
+  [/^1 · Chọn xe & ngày xuất$/, function(){return '1 · Choose vehicle & ship date';}],
+  [/^Tất cả ngày \((\d+)\)$/, function(m){return 'All days ('+m[1]+')';}],
+  [/^Tất cả ngày$/, function(){return 'All days';}],
+  [/^Số lượng \(cái\)$/, function(){return 'Quantity (pcs)';}],
+  [/^Chi tiết theo mã (.+)$/, function(m){return 'Detail by code '+m[1];}],
+  [/^Quét xuất — (.+)$/, function(m){return 'Outbound scan — '+m[1];}],
+  [/^Thể tích đã xếp:$/, function(){return 'Loaded volume:';}],
+  [/^\(ước tính đơn (.+)$/, function(m){return '(order est. '+m[1];}],
+  [/^Tổng tiền:$/, function(){return 'Total:';}],
+  [/^Số lượng \((.+)\)$/, function(m){return 'Quantity ('+m[1]+')';}],
+  [/^SO (.+) đã tồn tại — hãy đổi mã khác$/, function(m){return 'SO '+m[1]+' already exists — choose another code';}],
+  [/^Đã tạo (.+?) · (\d+) dòng$/, function(m){return 'Created '+m[1]+' · '+m[2]+' lines';}],
+  [/^Đã tạo (.+?) · (\d+) dòng · \+(\d+) SKU mới$/, function(m){return 'Created '+m[1]+' · '+m[2]+' lines · +'+m[3]+' new SKU';}],
+  [/^Đã xóa (\d+) loading$/, function(m){return 'Deleted '+m[1]+' loadings';}],
+  [/^Xóa (\d+) loading đã chọn\?[\s\S]*$/, function(m){return 'Delete '+m[1]+' selected loadings?\nStock will be restored for scanned items. (Completed loadings are skipped.)';}],
+  [/^Xóa loading (.+?)\?[\s\S]*$/, function(m){return 'Delete loading '+m[1]+'?\nStock will be restored for items scanned in this loading.';}],
+  [/^Xóa (\d+) đơn đã chọn\? \(Xóa cả các dòng hàng của đơn\)$/, function(m){return 'Delete '+m[1]+' selected orders? (Order lines will also be deleted.)';}],
+  [/^Xóa (\d+) đơn đã chọn\?[\s\S]*$/, function(m){return 'Delete '+m[1]+' selected orders? (Order lines will also be deleted.)';}]
+];
+function _dynEN(s){ for(var i=0;i<I18N_PATTERNS.length;i++){ var m=s.match(I18N_PATTERNS[i][0]); if(m) return I18N_PATTERNS[i][1](m); } return null; }
+function _conv(s){ if(LANG==='en'){ return _viMap[s]!=null?_viMap[s]:_dynEN(s); } return _enMap[s]!=null?_enMap[s]:null; }
+// L(): dịch chuỗi cho hộp thoại alert/confirm gốc (không nằm trong DOM)
+function L(s){ if(LANG!=='en') return s; var o=_conv(s); return o!=null?o:s; }
+function _applyText(node){ var raw=node.nodeValue; if(!raw) return; var s=raw.trim(); if(!s) return; var out=_conv(s); if(out!=null && out!==s){ node.nodeValue=raw.replace(s,out); } }
+function _applyNode(node){
+  if(!node) return;
+  if(node.nodeType===3){ _applyText(node); return; }
+  if(node.nodeType!==1) return;
+  if(node.hasAttribute){ ['placeholder','title'].forEach(function(a){ if(node.hasAttribute(a)){ var v=node.getAttribute(a),o=_conv(String(v).trim()); if(o!=null && o!==v) node.setAttribute(a,o); } }); }
+  for(var c=node.firstChild;c;c=c.nextSibling) _applyNode(c);
+}
+function translateTree(root){ _applyNode(root||document.body); }
+var _io_observer=null;
+function initLang(){
+  updateLangSeg();
+  if(window.MutationObserver && !_io_observer){
+    _io_observer=new MutationObserver(function(muts){
+      // chỉ quan sát childList -> thay nodeValue/attr KHÔNG kích hoạt lại -> không lặp
+      muts.forEach(function(m){ [].forEach.call(m.addedNodes,function(n){ _applyNode(n); }); });
+    });
+    _io_observer.observe(document.body,{subtree:true,childList:true});
+  }
+  translateTree(document.body);
+}
+function updateLangSeg(){
+  [].forEach.call(document.querySelectorAll('.langbtn'),function(b){
+    var on=b.getAttribute('data-l')===LANG;
+    if(b.classList.contains('btn')){ b.classList.toggle('btn-navy',on); b.classList.toggle('btn-ghost',!on); }
+    else { b.classList.toggle('on',on); }
+  });
+}
+function setLang(l){
+  if(l===LANG) return; LANG=l; localStorage.setItem('as_lang',l); updateLangSeg();
+  translateTree(document.body); // đổi ngay chữ đang hiển thị (2 chiều)
+  if(!document.getElementById('app').classList.contains('hide')){ if(session) buildSidebar(); if(currentView) go(currentView); }
+}
+
 /* ---------- KHỞI ĐỘNG ---------- */
 window.addEventListener('load', function(){
-  initTheme(); mountLogos(); buildRoleGrid(); buildPinPad();
+  initTheme(); initLang(); mountLogos(); buildRoleGrid(); buildPinPad();
   window.addEventListener('online',updateNet); window.addEventListener('offline',updateNet);
   if(!anonKey()){ show('screenConfig'); return; }
   var s=localStorage.getItem(CONFIG.sessionKey);
@@ -929,7 +1150,7 @@ function previewQR(){
   box.appendChild(wrap); fitLabel(wrap);
 }
 function printLabels(){
-  var sku=document.getElementById('skuSelect').value; if(!sku){alert('Chọn SKU');return;}
+  var sku=document.getElementById('skuSelect').value; if(!sku){alert(L('Chọn SKU'));return;}
   var qty=Math.max(1,parseInt(document.getElementById('lblQty').value||'1',10)), size=document.getElementById('lblSize').value;
   var s=cache.skus.filter(function(x){return x.sku_code===sku;})[0]||{product_name:sku};
   var area=document.getElementById('printArea'); area.innerHTML=''; var date=serverToday();
@@ -993,12 +1214,12 @@ function paintLoadings(lds){
 function toggleAllLd(btn){ var on=btn.textContent.indexOf('Chọn tất cả')>=0; [].forEach.call(document.querySelectorAll('.ldChk'),function(c){c.checked=on;}); btn.textContent=on?'Bỏ chọn':'Chọn tất cả'; }
 async function deleteSelectedLoadings(){
   var ids=[].map.call(document.querySelectorAll('.ldChk:checked'),function(c){return c.value;});
-  if(!ids.length){ alert('Hãy tích chọn loading cần xóa'); return; }
-  if(!confirm('Xóa '+ids.length+' loading đã chọn?\nTồn kho sẽ được hoàn lại cho các lượt đã quét. (Loading đã hoàn tất sẽ bị bỏ qua.)')) return;
+  if(!ids.length){ alert(L('Hãy tích chọn loading cần xóa')); return; }
+  if(!confirm(L('Xóa '+ids.length+' loading đã chọn?\nTồn kho sẽ được hoàn lại cho các lượt đã quét. (Loading đã hoàn tất sẽ bị bỏ qua.)'))) return;
   try{ var r=await api('deleteLoadings',{loading_ids:ids}); _ldMemo=null; _ldAll=[];
     flashAlert((r.errors&&r.errors.length)?'warn':'good','Xóa loading','Đã xóa '+r.deleted+' loading'+((r.errors&&r.errors.length)?('\nBỏ qua: '+r.errors.length):''), true);
     viewOutbound(document.getElementById('main'));
-  }catch(e){ alert(e.message); }
+  }catch(e){ alert(L(e.message)); }
 }
 var _sosMemo=null, _editPre=null, _selSO={};
 function openCreateLoading(pre){
@@ -1034,12 +1255,12 @@ function applyOpenSOs(list, pre){
   renderSOpick(sos); renderSelChips(); recalcEst();
 }
 async function updateLoadingSave(id){
-  var sel=selectedSOs(); if(!sel.length){ alert('Chọn ít nhất 1 SO'); return; }
-  try{ await api('updateLoading',{loading_id:id, vehicle_id:document.getElementById('ldVehicle').value, so_list:sel, loading_date:(document.getElementById('ldDate')||{}).value||''}); _ldMemo=null; openLoading(id); }catch(e){ alert(e.message); }
+  var sel=selectedSOs(); if(!sel.length){ alert(L('Chọn ít nhất 1 SO')); return; }
+  try{ await api('updateLoading',{loading_id:id, vehicle_id:document.getElementById('ldVehicle').value, so_list:sel, loading_date:(document.getElementById('ldDate')||{}).value||''}); _ldMemo=null; openLoading(id); }catch(e){ alert(L(e.message)); }
 }
 function editLoading(){ var ld=window._curLoading; if(!ld)return; openCreateLoading({loading_id:ld.loading_id, vehicle_id:ld.vehicle_id, loading_date:ld.loading_date, so_list:String(ld.so_list).split(',').filter(String)}); }
-async function deleteLoadingNow(){ var ld=window._curLoading; if(!ld)return; if(!confirm('Xóa loading '+ld.loading_id+'?\nTồn kho sẽ được hoàn lại cho các lượt đã quét trong loading này.'))return;
-  try{ await api('deleteLoading',{loading_id:ld.loading_id}); _ldMemo=null; flashAlert('good','✓ ĐÃ XÓA',ld.loading_id, true); setTimeout(function(){go('outbound');},900); }catch(e){ alert(e.message); } }
+async function deleteLoadingNow(){ var ld=window._curLoading; if(!ld)return; if(!confirm(L('Xóa loading '+ld.loading_id+'?\nTồn kho sẽ được hoàn lại cho các lượt đã quét trong loading này.')))return;
+  try{ await api('deleteLoading',{loading_id:ld.loading_id}); _ldMemo=null; flashAlert('good','✓ ĐÃ XÓA',ld.loading_id, true); setTimeout(function(){go('outbound');},900); }catch(e){ alert(L(e.message)); } }
 function renderSOpick(list){
   var c=document.getElementById('soPick'); c.innerHTML='';
   if(!list.length){ c.innerHTML='<div class="text-slate-400 text-center py-6">Không có SO cần xuất</div>'; return; }
@@ -1065,12 +1286,12 @@ function recalcEst(){
   document.getElementById('estVol').textContent='Đã chọn '+sel.length+' SO · '+qty+' cái'+(cap?(' · sức chứa xe '+cap+' m³'):'');
 }
 async function submitLoading(){
-  var sel=selectedSOs(); if(!sel.length){alert('Chọn ít nhất 1 SO');return;}
+  var sel=selectedSOs(); if(!sel.length){alert(L('Chọn ít nhất 1 SO'));return;}
   try{ await api('createLoading',{vehicle_id:document.getElementById('ldVehicle').value,so_list:sel,loading_date:(document.getElementById('ldDate')||{}).value||''}); _ldMemo=null;
     // Lưu sẵn rồi quay về danh sách — khi ra xuất hàng mở loading này lên để quét
     flashAlert('good','✓ ĐÃ LƯU LOADING','Mở lại từ danh sách để quét khi xuất hàng', true);
     setTimeout(function(){ go('outbound'); }, 950);
-  }catch(e){ alert(e.message); }
+  }catch(e){ alert(L(e.message)); }
 }
 async function openLoading(id){
   activeLoading=id; var m=document.getElementById('main'); m.innerHTML='<div class="text-center text-slate-400 py-12">Đang tải loading…</div>';
@@ -1153,7 +1374,7 @@ function rollbackOutbound(sku, soNum){
   if(currentView==='outbound') renderLoading(d);
 }
 async function completeLoading(){
-  if(!confirm('Hoàn tất loading này? Sẽ cập nhật SO và tồn kho.'))return;
+  if(!confirm(L('Hoàn tất loading này? Sẽ cập nhật SO và tồn kho.')))return;
   try{ var d=await api('completeLoading',{loading_id:activeLoading}); _ldMemo=null; _sosMemo=null; flashAlert('good','✓ HOÀN TẤT','Đã xếp '+d.total_volume_m3+' m³', true); setTimeout(function(){go('outbound');},1000); }catch(e){ flashAlert('bad','LỖI', e.message); }
 }
 
@@ -1199,18 +1420,18 @@ function renderInv(){
 function updateInvKpi(){ var el=document.getElementById('invKpi'); if(!el)return; var ts=window._inv.reduce(function(a,r){return a+r.in_stock;},0); el.innerHTML=kpi('Loại SKU',window._inv.length,'var(--navy)','🏷️')+kpi('Tổng tồn',ts,'var(--amber)','📦')+kpi('Sắp hết', window._inv.filter(function(r){return r.in_stock<(parseInt(cache.settings.reorder_threshold||"10",10));}).length,'var(--red)','⚠️'); }
 async function addStockManual(){
   var sku=(document.getElementById('adjSku')||{}).value; var qty=parseInt((document.getElementById('adjQty')||{}).value,10);
-  if(!sku){alert('Chọn SKU');return;} if(isNaN(qty)||qty===0){alert('Nhập số lượng khác 0');return;}
+  if(!sku){alert(L('Chọn SKU'));return;} if(isNaN(qty)||qty===0){alert(L('Nhập số lượng khác 0'));return;}
   try{ var r=await api('adjustStock',{sku_code:sku,delta:qty});
     flashAlert('good','✓ ĐÃ CỘNG TỒN', sku+'\nTồn mới: '+r.qty, true);
     api('getInventory').then(function(rr){ cache.inventory=rr.items; if(currentView==='inventory'){ buildInvData(); renderInv(); updateInvKpi(); } }).catch(function(){});
-  }catch(e){ alert(e.message); }
+  }catch(e){ alert(L(e.message)); }
 }
 async function setStockManual(sku,v){
   v=parseInt(v,10); if(isNaN(v))return;
   var row=(window._inv||[]).filter(function(x){return x.sku_code===sku;})[0]; var cur=row?row.in_stock:0; var delta=v-cur;
   if(delta===0) return;
   try{ var r=await api('adjustStock',{sku_code:sku,delta:delta}); if(row)row.in_stock=r.qty; updateInvKpi(); api('getInventory').then(function(rr){cache.inventory=rr.items;}).catch(function(){}); }
-  catch(e){ alert(e.message); }
+  catch(e){ alert(L(e.message)); }
 }
 
 /* ====================================================================
@@ -1245,7 +1466,7 @@ function viewProducts(m){
 }
 // Sửa SKU ngay trong màn Sản phẩm (truyền INDEX để tránh lỗi dấu " trong mã)
 function openProductEdit(i){
-  var s=_prRows[i]; if(!s){alert('Không tìm thấy SKU');return;}
+  var s=_prRows[i]; if(!s){alert(L('Không tìm thấy SKU'));return;}
   var m=document.getElementById('main');
   function f(id,label,v,ph){ return '<div><label class="text-xs text-slate-500">'+label+'</label><input id="'+id+'" class="field" value="'+String(v==null?'':v).replace(/"/g,'&quot;')+'" placeholder="'+(ph||'')+'"></div>'; }
   m.innerHTML=
@@ -1332,9 +1553,9 @@ function renderOrders(){
 function toggleAllOrd(btn){ var on=btn.textContent.indexOf('Chọn tất cả')>=0; [].forEach.call(document.querySelectorAll('.ordChk'),function(c){c.checked=on;}); btn.textContent=on?'Bỏ chọn':'Chọn tất cả'; }
 async function deleteSelectedOrders(){
   var ids=[].map.call(document.querySelectorAll('.ordChk:checked'),function(c){return c.value;});
-  if(!ids.length){ alert('Hãy tích chọn đơn cần xóa'); return; }
-  if(!confirm('Xóa '+ids.length+' đơn đã chọn? (Xóa cả các dòng hàng của đơn)')) return;
-  try{ var r=await api('deleteOrders',{so_numbers:ids}); flashAlert('good','Xóa đơn','Đã xóa '+r.deleted+' đơn', true); viewOrders(document.getElementById('main')); }catch(e){ alert(e.message); }
+  if(!ids.length){ alert(L('Hãy tích chọn đơn cần xóa')); return; }
+  if(!confirm(L('Xóa '+ids.length+' đơn đã chọn? (Xóa cả các dòng hàng của đơn)'))) return;
+  try{ var r=await api('deleteOrders',{so_numbers:ids}); flashAlert('good','Xóa đơn','Đã xóa '+r.deleted+' đơn', true); viewOrders(document.getElementById('main')); }catch(e){ alert(L(e.message)); }
 }
 async function openOrder(so){
   var m=document.getElementById('main'); m.innerHTML='<div class="text-center text-slate-400 py-10">Đang tải…</div>';
@@ -1367,7 +1588,7 @@ function openCreateOrder(){
        f('co_locgrp','Location Group')+
        '<div><label class="text-xs text-slate-500">Ngày đặt</label><input id="co_date" type="date" class="field" value="'+serverToday()+'"></div>'+
        '<div><label class="text-xs text-slate-500">Ngày giao</label><input id="co_deliv" type="date" class="field"></div>'+
-       '<div><label class="text-xs text-slate-500">Trạng thái</label><select id="co_status" class="field"><option>Issued</option><option>In Progress</option><option>Fulfilled</option></select></div>'+
+       '<div><label class="text-xs text-slate-500">Trạng thái</label><select id="co_status" class="field"><option value="Issued">Issued</option><option value="In Progress">In Progress</option><option value="Fulfilled">Fulfilled</option></select></div>'+
      '</div></div>'+
    '<div class="card p-5 mb-3">'+
      '<div class="flex items-center justify-between mb-2"><div class="font-semibold text-slate-700">Dòng hàng</div><button class="btn btn-ghost" onclick="coAddLine()">➕ Thêm dòng</button></div>'+
@@ -1568,7 +1789,7 @@ function adminImportSKU(){
 }
 function downloadTemplate(){ var blob=new Blob(['﻿'+SKU_TEMPLATE],{type:'text/csv;charset=utf-8'}); var a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='mau-danh-muc-san-pham.csv'; a.click(); }
 function doImportSKU(){
-  var f=document.getElementById('skuFile').files[0]; if(!f){alert('Chọn file CSV');return;}
+  var f=document.getElementById('skuFile').files[0]; if(!f){alert(L('Chọn file CSV'));return;}
   var msg=document.getElementById('impSkuMsg'); msg.style.color='var(--navy)'; msg.textContent='Đang đọc file…';
   var rd=new FileReader(); rd.onload=function(){ api('importSKU',{csvText:rd.result}).then(function(d){ msg.style.color='var(--green)'; msg.textContent='✓ Thêm '+d.added+' · cập nhật '+d.updated+' SKU'; refreshCache(); }).catch(function(e){ msg.style.color='var(--red)'; msg.textContent=e.message; }); };
   rd.readAsText(f);
@@ -1581,7 +1802,7 @@ function adminVehicle(){
   '<div class="card p-4"><div id="vehList"></div></div>'; renderVeh();
 }
 function renderVeh(){ document.getElementById('vehList').innerHTML=cache.vehicles.map(function(v){return '<div class="flex justify-between items-center py-2" style="border-bottom:1px solid var(--line)"><div class="font-medium">'+v.vehicle_name+' <span class="text-slate-400 text-sm">'+(v.plate_no||'')+'</span></div><b>'+v.capacity_m3+' m³</b></div>';}).join('')||'<div class="text-slate-400 text-center py-3">Chưa có xe</div>'; }
-async function saveVehicle(){ try{ await api('saveVehicle',{vehicle_name:document.getElementById('vh_name').value,plate_no:document.getElementById('vh_plate').value,capacity_m3:document.getElementById('vh_cap').value}); await refreshCache(); renderVeh(); document.getElementById('vh_name').value=''; document.getElementById('vh_cap').value=''; }catch(e){ alert(e.message); } }
+async function saveVehicle(){ try{ await api('saveVehicle',{vehicle_name:document.getElementById('vh_name').value,plate_no:document.getElementById('vh_plate').value,capacity_m3:document.getElementById('vh_cap').value}); await refreshCache(); renderVeh(); document.getElementById('vh_name').value=''; document.getElementById('vh_cap').value=''; }catch(e){ alert(L(e.message)); } }
 function adminUser(){
   document.getElementById('adminBody').innerHTML=
   '<div class="card p-5 mb-3"><div class="font-semibold mb-3 text-slate-700">Thêm / Sửa user</div>'+
@@ -1591,14 +1812,14 @@ function adminUser(){
   '<div class="card p-4"><div id="userList"></div></div>'; loadUsers();
 }
 async function loadUsers(){ try{ var u=(await api('getUsers')).items; document.getElementById('userList').innerHTML=u.map(function(x){return '<div class="flex justify-between items-center py-2" style="border-bottom:1px solid var(--line)"><div class="font-medium">'+x.username+' <span class="pill" style="background:#eef;color:var(--navy)">'+x.role+'</span></div><span class="text-sm '+(String(x.active)==='false'?'text-red-500':'text-green-600')+'">'+(String(x.active)==='false'?'khóa':'hoạt động')+'</span></div>';}).join(''); }catch(e){ document.getElementById('userList').innerHTML=e.message; } }
-async function saveUser(){ try{ await api('saveUser',{username:document.getElementById('us_name').value,pin:document.getElementById('us_pin').value,role:document.getElementById('us_role').value}); loadUsers(); document.getElementById('us_name').value=''; document.getElementById('us_pin').value=''; }catch(e){ alert(e.message); } }
+async function saveUser(){ try{ await api('saveUser',{username:document.getElementById('us_name').value,pin:document.getElementById('us_pin').value,role:document.getElementById('us_role').value}); loadUsers(); document.getElementById('us_name').value=''; document.getElementById('us_pin').value=''; }catch(e){ alert(L(e.message)); } }
 function adminImport(){
   document.getElementById('adminBody').innerHTML=
   '<div class="card p-5"><div class="font-semibold mb-1 text-slate-700">Import Sales Order từ CSV</div>'+
     '<p class="text-sm text-slate-500 mb-3">File ERP "Sales Order Summary". Tự nhận: SO #, Customer, Product Number, Description, Ordered Qty, Order Status… Báo giá (Estimate) tự bỏ qua.</p>'+
     '<input type="file" id="soFile" accept=".csv" class="field mb-2" style="padding-top:12px"><button class="btn btn-navy w-full" onclick="doImportSO()">Import SO</button><div id="impMsg" class="text-center text-sm mt-2"></div></div>';
 }
-function doImportSO(){ var f=document.getElementById('soFile').files[0]; if(!f){alert('Chọn file CSV');return;} var msg=document.getElementById('impMsg'); msg.style.color='var(--navy)'; msg.textContent='Đang đọc file…';
+function doImportSO(){ var f=document.getElementById('soFile').files[0]; if(!f){alert(L('Chọn file CSV'));return;} var msg=document.getElementById('impMsg'); msg.style.color='var(--navy)'; msg.textContent='Đang đọc file…';
   var rd=new FileReader(); rd.onload=function(){ api('importSO',{csvText:rd.result}).then(function(d){ msg.style.color='var(--green)'; msg.textContent='✓ '+d.total_so+' SO, +'+d.added_lines+' dòng, +'+d.added_sku+' SKU mới'; refreshCache(); }).catch(function(e){ msg.style.color='var(--red)'; msg.textContent=e.message; }); }; rd.readAsText(f);
 }
 function adminSettings(){ var s=cache.settings;
@@ -1669,8 +1890,8 @@ function resolveColor(c){ if(typeof c==='string' && c.indexOf('var(')===0){ retu
 function barChart(id,labels,data,color){ if(_chart[id])_chart[id].destroy(); var col=resolveColor(color)||cssVar('--navy')||'#6366F1';
   _chart[id]=new Chart(document.getElementById(id),{type:'bar',data:{labels:labels,datasets:[{data:data,backgroundColor:col,borderRadius:6}]},options:{plugins:{legend:{display:false}},scales:{x:{ticks:{font:{size:9},maxRotation:60}},y:{beginAtZero:true}}}}); }
 function lineChart(id,labels,a,b){ if(_chart[id])_chart[id].destroy(); var nv=cssVar('--navy')||'#6366F1', gn=cssVar('--green')||'#22C55E';
-  _chart[id]=new Chart(document.getElementById(id),{type:'line',data:{labels:labels,datasets:[{label:'Nhập',data:a,borderColor:nv,backgroundColor:nv+'22',tension:.3,fill:true},{label:'Xuất',data:b,borderColor:gn,backgroundColor:gn+'22',tension:.3,fill:true}]},options:{scales:{x:{ticks:{font:{size:9}}},y:{beginAtZero:true}}}}); }
-function exportCSV(rows,name){ if(!rows||!rows.length){alert('Không có dữ liệu');return;} var keys=Object.keys(rows[0]); var csv=[keys.join(',')].concat(rows.map(function(r){return keys.map(function(k){return '"'+String(r[k]).replace(/"/g,'""')+'"';}).join(',');})).join('\n'); var blob=new Blob(['﻿'+csv],{type:'text/csv;charset=utf-8'}); var a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; a.click(); }
+  _chart[id]=new Chart(document.getElementById(id),{type:'line',data:{labels:labels,datasets:[{label:L('Nhập'),data:a,borderColor:nv,backgroundColor:nv+'22',tension:.3,fill:true},{label:L('Xuất'),data:b,borderColor:gn,backgroundColor:gn+'22',tension:.3,fill:true}]},options:{scales:{x:{ticks:{font:{size:9}}},y:{beginAtZero:true}}}}); }
+function exportCSV(rows,name){ if(!rows||!rows.length){alert(L('Không có dữ liệu'));return;} var keys=Object.keys(rows[0]); var csv=[keys.join(',')].concat(rows.map(function(r){return keys.map(function(k){return '"'+String(r[k]).replace(/"/g,'""')+'"';}).join(',');})).join('\n'); var blob=new Blob(['﻿'+csv],{type:'text/csv;charset=utf-8'}); var a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; a.click(); }
 </script>
 </body>
 </html>
