@@ -107,6 +107,45 @@
   body[data-theme="dark"] .border-t,
   body[data-theme="dark"] .border{border-color:var(--line)!important}
 
+  /* ===== LOGIN (thiết kế lại — phong cách công nghệ) ===== */
+  #screenLogin{position:relative;overflow:hidden;background:var(--bg)}
+  .login-bg{position:absolute;inset:0;z-index:0;overflow:hidden;pointer-events:none}
+  .login-bg .blob{position:absolute;border-radius:50%;filter:blur(72px);opacity:.5;animation:lg-floaty 16s ease-in-out infinite}
+  .login-bg .b1{width:540px;height:540px;background:radial-gradient(circle at 30% 30%,var(--navy-2),transparent 70%);top:-180px;left:-130px}
+  .login-bg .b2{width:480px;height:480px;background:radial-gradient(circle at 30% 30%,var(--red-2),transparent 70%);bottom:-200px;right:-130px;animation-delay:-6s}
+  .login-bg .b3{width:380px;height:380px;background:radial-gradient(circle at 30% 30%,var(--green),transparent 70%);top:42%;left:58%;opacity:.28;animation-delay:-11s}
+  .login-grid{position:absolute;inset:0;background-image:linear-gradient(var(--line) 1px,transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px);background-size:48px 48px;opacity:.35;-webkit-mask-image:radial-gradient(circle at 50% 38%,#000,transparent 72%);mask-image:radial-gradient(circle at 50% 38%,#000,transparent 72%)}
+  @keyframes lg-floaty{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(34px,-30px) scale(1.1)}}
+  @keyframes lg-pulse{0%,100%{opacity:1;box-shadow:0 0 0 0 var(--green)}50%{opacity:.6;box-shadow:0 0 0 5px transparent}}
+  @keyframes lg-rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}
+
+  .login-wrap{position:relative;z-index:2;width:100%;max-width:960px;display:grid;grid-template-columns:1.04fr .96fr;border-radius:26px;overflow:hidden;border:1px solid var(--line);box-shadow:0 40px 90px -40px rgba(0,0,0,.6);animation:lg-rise .5s ease both}
+  .login-hero{position:relative;padding:46px 42px;display:flex;flex-direction:column;justify-content:space-between;color:#fff;overflow:hidden;background:linear-gradient(155deg,#0B1430,#13265A 52%,#231C63)}
+  .login-hero::after{content:"";position:absolute;inset:0;background-image:linear-gradient(rgba(255,255,255,.06) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.06) 1px,transparent 1px);background-size:34px 34px;-webkit-mask-image:radial-gradient(circle at 20% 0%,#000,transparent 70%);mask-image:radial-gradient(circle at 20% 0%,#000,transparent 70%);pointer-events:none}
+  .login-hero>*{position:relative;z-index:1}
+  .login-hero .lh-brand{font-weight:900;font-size:30px;letter-spacing:.01em;line-height:1.05}
+  .login-hero .lh-brand .s{color:var(--red-2)}
+  .login-hero .lh-tag{margin-top:10px;color:#AEB9DA;font-size:14px;max-width:300px;line-height:1.55}
+  .login-hero .lh-feats{display:flex;flex-direction:column;gap:12px;margin-top:28px}
+  .login-hero .lh-feat{display:flex;align-items:center;gap:11px;font-size:14px;color:#DCE3F5}
+  .login-hero .lh-feat .ic{width:34px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:16px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12)}
+  .login-hero .lh-foot{display:flex;align-items:center;gap:9px;font-size:12.5px;color:#9FAAC9}
+  .lg-dot{width:9px;height:9px;border-radius:50%;background:var(--green);animation:lg-pulse 2s ease-in-out infinite}
+
+  .login-panel{position:relative;padding:40px 36px;background:var(--card)}
+  .login-panel .lp-title{font-weight:800;font-size:22px;letter-spacing:-.01em;color:var(--ink)}
+  .login-panel .lp-sub{color:var(--muted);font-size:13.5px;margin-top:4px;margin-bottom:22px}
+  .login-panel .lp-label{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:9px}
+  #screenLogin .field{min-height:52px;border-radius:13px;background:var(--card-2)}
+  .login-mobile-logo{display:none}
+
+  @media(max-width:860px){
+    .login-wrap{grid-template-columns:1fr;max-width:430px}
+    .login-hero{display:none}
+    .login-panel{padding:30px 24px 26px}
+    .login-mobile-logo{display:flex;justify-content:center;margin-bottom:18px;transform:scale(1.15)}
+  }
+
   /* Scanner fullscreen */
   #scanWrap{position:fixed;inset:0;background:#000;z-index:70;display:none;flex-direction:column}
   #reader{flex:1;width:100%}
@@ -174,14 +213,37 @@
 </div>
 
 <!-- ============ 1. LOGIN ============ -->
-<div id="screenLogin" class="hide" style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;
-     background:radial-gradient(1200px 500px at 50% -10%, #1B356B22, transparent), var(--bg)">
-  <div style="width:100%;max-width:420px">
-    <div class="text-center mb-5"><div id="loginLogo" class="flex justify-center mb-2" style="transform:scale(1.25)"></div>
-      <div class="text-slate-500 mt-3">Hệ thống Quản lý Xuất Nhập Tồn kho</div></div>
-    <div class="card p-6">
-      <div class="font-semibold mb-2 text-slate-700">Vai trò</div>
+<div id="screenLogin" class="hide" style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px">
+  <!-- nền công nghệ: lưới + khối sáng động -->
+  <div class="login-bg" aria-hidden="true">
+    <div class="login-grid"></div>
+    <div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div>
+  </div>
+
+  <div class="login-wrap">
+    <!-- PANEL TRÁI: thương hiệu (chỉ hiện trên màn rộng) -->
+    <div class="login-hero">
+      <div>
+        <div class="lh-brand">AMERICAN <span class="s">STAR</span></div>
+        <div class="lh-tag">Hệ thống quản lý kho thông minh — quét QR, kiểm soát xuất / nhập / tồn theo thời gian thực.</div>
+        <div class="lh-feats">
+          <div class="lh-feat"><span class="ic">📷</span> Quét QR nhập – xuất ngay trên điện thoại</div>
+          <div class="lh-feat"><span class="ic">🚚</span> Xếp xe theo m³ &amp; 7 điểm chặn xuất hàng</div>
+          <div class="lh-feat"><span class="ic">📊</span> Dashboard &amp; báo cáo vận hành tức thì</div>
+        </div>
+      </div>
+      <div class="lh-foot"><span class="lg-dot"></span> Hệ thống trực tuyến · Bảo mật nội bộ</div>
+    </div>
+
+    <!-- PANEL PHẢI: form đăng nhập -->
+    <div class="login-panel">
+      <div id="loginLogo" class="login-mobile-logo"></div>
+      <div class="lp-title">Đăng nhập ca làm việc</div>
+      <div class="lp-sub">Chọn vai trò và nhập mã PIN để bắt đầu.</div>
+
+      <div class="lp-label">Vai trò</div>
       <div class="grid grid-cols-2 gap-2.5 mb-5" id="roleGrid"></div>
+
       <input id="loginUser" class="field mb-3" placeholder="Tên đăng nhập" autocomplete="username">
       <input id="loginPin" class="field text-center tracking-[.5em] text-2xl mb-3" inputmode="numeric" maxlength="6" placeholder="••••" autocomplete="current-password">
       <div id="pinPad" class="grid grid-cols-3 gap-2 mb-4"></div>
@@ -273,8 +335,21 @@ var NAV = {
   admin:{label:'Quản trị',icon:'⚙️',group:'HỆ THỐNG',sub:'SKU · User · Xe · Import'}
 };
 var session=null, cache={skus:[],inventory:[],vehicles:[],settings:{},server_date:''}, currentView=null, lastScan={value:'',t:0};
-// Ngày theo MÚI GIỜ MÁY CHỦ (để báo cáo/loadings khớp với timestamp đã lưu)
-function serverToday(){ return cache.server_date || new Date().toISOString().slice(0,10); }
+// ===== MÚI GIỜ VẬN HÀNH (Texas) =====
+// Toàn bộ "ngày làm việc" tính theo giờ Texas (Central), bất kể máy mở app đặt giờ gì.
+// Dùng Intl -> tự xử lý giờ mùa hè (CST/CDT), KHÔNG hardcode lệch giờ.
+var BIZ_TZ='America/Chicago';
+// Tách các thành phần năm/tháng/ngày/giờ/phút/giây của 1 Date theo BIZ_TZ
+function tzParts(d){
+  var f=new Intl.DateTimeFormat('en-US',{timeZone:BIZ_TZ,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
+  var o={}; f.formatToParts(d).forEach(function(p){ o[p.type]=p.value; });
+  if(o.hour==='24') o.hour='00';
+  return o;
+}
+// Số ms mà giờ Texas đang "lệch" so với UTC tại thời điểm d (âm vì Chicago sau UTC)
+function tzOffsetMs(d){ var p=tzParts(d); return Date.UTC(+p.year,+p.month-1,+p.day,+p.hour,+p.minute,+p.second)-d.getTime(); }
+// Ngày hôm nay theo giờ Texas (YYYY-MM-DD)
+function serverToday(){ return cache.server_date || localDate(new Date()); }
 function round3(n){ return Math.round((+n||0)*1000)/1000; }
 /* ===== THEME Sáng/Tối ===== */
 function setTheme(t){
@@ -316,9 +391,21 @@ function anonKey(){ return SUPABASE_ANON_KEY || localStorage.getItem('as_anon') 
 function ensureClient(){ if(!sb && anonKey() && window.supabase) sb = window.supabase.createClient(SUPABASE_URL, anonKey()); return sb; }
 
 function pad(n){ return (n<10?'0':'')+n; }
-function localDate(d){ d=d||new Date(); return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate()); }
-function fmtLocal(iso){ var d=new Date(iso); return localDate(d)+' '+pad(d.getHours())+':'+pad(d.getMinutes())+':'+pad(d.getSeconds()); }
-function dayRangeISO(dateStr){ var s=new Date(dateStr+'T00:00:00'); var e=new Date(dateStr+'T00:00:00'); e.setDate(e.getDate()+1); return {start:s.toISOString(), end:e.toISOString()}; }
+function localDate(d){ d=d||new Date(); var p=tzParts(d); return p.year+'-'+p.month+'-'+p.day; }
+function fmtLocal(iso){ var p=tzParts(new Date(iso)); return p.year+'-'+p.month+'-'+p.day+' '+p.hour+':'+p.minute+':'+p.second; }
+// Mốc UTC ứng với 00:00 giờ Texas của 1 ngày (tính lại offset tại đúng mốc -> chuẩn DST)
+function dayStartUTC(dateStr){
+  var guess=new Date(dateStr+'T00:00:00Z');           // tạm coi như UTC
+  var s=new Date(guess.getTime()-tzOffsetMs(guess));
+  return new Date(guess.getTime()-tzOffsetMs(s));
+}
+// Cộng/trừ n ngày vào 1 chuỗi YYYY-MM-DD theo lịch (an toàn múi giờ)
+function addDays(dateStr,n){ var d=new Date(dateStr+'T12:00:00Z'); d.setUTCDate(d.getUTCDate()+n); return d.toISOString().slice(0,10); }
+// Khoảng UTC [start,end) ứng với 1 ngày theo lịch Texas. End = đầu ngày kế tiếp
+// nên tự đúng cả ngày chuyển DST (ngày 23h hoặc 25h).
+function dayRangeISO(dateStr){
+  return {start:dayStartUTC(dateStr).toISOString(), end:dayStartUTC(addDays(dateStr,1)).toISOString()};
+}
 function ymdhms(){ var d=new Date(); return (''+d.getFullYear()).slice(2)+pad(d.getMonth()+1)+pad(d.getDate())+'-'+pad(d.getHours())+pad(d.getMinutes())+pad(d.getSeconds())+'-'+Math.floor(Math.random()*1000); }
 function chk(r){ if(r.error) throw new Error(r.error.message||'Lỗi Supabase'); return r.data; }
 function numOrNull(v){ var n=parseFloat(v); return isNaN(n)?null:n; }
@@ -534,6 +621,34 @@ async function api(action, p){
       await audit(session.username,'import_so','SO='+soArr.length+' lines='+soL.length+' newsku='+newSk.length);
       return {added_so:soArr.length,added_lines:soL.length,added_sku:newSk.length,total_so:soArr.length};
     }
+    case 'createOrder': {
+      // Tạo 1 đơn hàng thủ công (cùng cấu trúc như importSO để mọi nơi dùng chung)
+      var h=p.header||{}, inLines=p.lines||[];
+      var so=String(h.so_number||'').trim(); if(!so) throw new Error('Thiếu SO # (mã đơn)');
+      if(!inLines.length) throw new Error('Đơn cần ít nhất 1 dòng hàng');
+      var exist=(chk(await sb.from('sales_orders').select('so_number').eq('so_number',so))||[])[0];
+      if(exist) throw new Error('SO "'+so+'" đã tồn tại — hãy đổi mã khác');
+      var st=h.status||'Issued';
+      var soL2=[], skuSeen2={}, amt2=0;
+      inLines.forEach(function(l){
+        var sku=String(l.sku_code||'').trim(); if(!sku) return;
+        var qty=intOrNull(l.qty_ordered)||0; var price=moneyNum(l.ordered_price)||0; amt2+=price;
+        // raw giữ cùng tên cột như file ERP -> màn chi tiết đơn hiển thị bảng cột đầy đủ
+        var raw={'SO #':so,'Customer':h.customer||'','Sales Person':h.sales_person||'','State / Province':h.state||'','Order Status':st,'Product Number':sku,'Description':l.product_name||'','Ordered Qty':String(qty),'UOM':l.uom||'','Ordered Price':String(price),'Order Date Issued':h.so_date||'','Order Date Scheduled':h.delivery_date||''};
+        soL2.push({so_number:so,sku_code:sku,product_name:l.product_name||sku,qty_ordered:qty,qty_shipped:0,uom:l.uom||'',ordered_price:price,shipped_price:0,remaining_qty:qty,remaining_price:price,item_status:st,item_type:'',item_date_scheduled:dateOrNull(h.delivery_date),raw:raw});
+        if(!skuSeen2[sku]) skuSeen2[sku]=l.product_name||sku;
+      });
+      if(!soL2.length) throw new Error('Không có dòng hàng hợp lệ (thiếu mã SKU)');
+      var header2={so_number:so,customer:h.customer||'',customer_po:h.customer_po||'',sales_person:h.sales_person||'',state:h.state||'',so_class:h.so_class||'',location_group:h.location_group||'',so_date:dateOrNull(h.so_date),delivery_date:dateOrNull(h.delivery_date),fulfilled_date:null,status:st,total_amount:Math.round(amt2*100)/100,created_by:session.username};
+      chk(await sb.from('sales_orders').insert(header2));
+      for(var ce=0;ce<soL2.length;ce+=300){ chk(await sb.from('so_lines').insert(soL2.slice(ce,ce+300))); }
+      // tự tạo SKU mới chưa có trong danh mục (giống importSO)
+      var exC={}; (chk(await sb.from('master_sku').select('sku_code'))||[]).forEach(function(s){exC[s.sku_code]=true;});
+      var newSkC=Object.keys(skuSeen2).filter(function(s){return !exC[s];}).map(function(s){return {sku_code:s,product_name:skuSeen2[s],unit:'ea',dim_unit:'inch',active:true};});
+      for(var cf=0;cf<newSkC.length;cf+=400){ chk(await sb.from('master_sku').insert(newSkC.slice(cf,cf+400))); }
+      await audit(session.username,'create_order','SO='+so+' lines='+soL2.length+' newsku='+newSkC.length);
+      return {so_number:so, lines:soL2.length, new_sku:newSkC.length};
+    }
     case 'getOrders': {
       var rows=chk(await sb.from('sales_orders').select('so_number,customer,status,state,sales_person,so_class,location_group,so_date,delivery_date,total_amount').order('so_number',{ascending:false}))||[];
       return {items:rows};
@@ -587,8 +702,8 @@ async function api(action, p){
       var inToday=(await api('reportInbound',{date:date2})).total;
       var outToday=(await api('reportOutbound',{date:date2})).total_shipped;
       var openSOs=(await api('getOpenSOs')).items.length;
-      var days=[]; for(var i2=29;i2>=0;i2--){ var dd=new Date(date2+'T00:00:00'); dd.setDate(dd.getDate()-i2); days.push(localDate(dd)); }
-      var start=new Date(days[0]+'T00:00:00').toISOString(), end=new Date(new Date(date2+'T00:00:00').getTime()+86400000).toISOString();
+      var days=[]; for(var i2=29;i2>=0;i2--){ days.push(addDays(date2,-i2)); }
+      var start=dayRangeISO(days[0]).start, end=dayRangeISO(date2).end;
       var inS=chk(await sb.from('inbound_scans').select('ts,qty').gte('ts',start).lt('ts',end))||[];
       var outS=chk(await sb.from('outbound_scans').select('ts,sku_code,validation_status').gte('ts',start).lt('ts',end).eq('validation_status','OK'))||[];
       var inMap={},outMap={},top={};
@@ -1161,7 +1276,8 @@ async function saveProduct(){
 var _ordersAll=[];
 async function viewOrders(m){
   m.innerHTML=
-  '<div class="sectiontitle mb-3">Đơn hàng (Sales Order)</div>'+
+  '<div class="flex items-center justify-between gap-2 mb-3"><div class="sectiontitle">Đơn hàng (Sales Order)</div>'+
+    '<button class="btn btn-navy" onclick="openCreateOrder()">➕ Tạo đơn</button></div>'+
   '<div class="card p-4 mb-3">'+
     '<div class="grid grid-cols-2 md:grid-cols-4 gap-2 mb-2">'+
       '<input id="ordSearch" class="field" placeholder="🔍 SO / khách" oninput="renderOrders()">'+
@@ -1233,6 +1349,80 @@ async function openOrder(so){
   '<div class="card p-5 mb-3"><div class="flex justify-between items-center"><div class="sectiontitle">'+so+'</div><div class="num" style="font-size:24px;color:var(--green)">'+fmtMoney(h.total_amount)+'</div></div>'+
     '<div class="text-sm text-slate-500 mt-1">'+(h.customer||'')+' · '+(h.status||'')+' · giao '+(h.delivery_date||'-')+' · '+lines.length+' dòng</div></div>'+
   '<div class="card overflow-auto"><div class="font-semibold p-3 pb-1 text-slate-700">Chi tiết — tất cả cột</div><table style="white-space:nowrap"><thead><tr>'+(thead||'<th>(trống)</th>')+'</tr></thead><tbody>'+(body||'<tr><td class="text-slate-400">Đơn này import trước khi bật lưu đầy đủ — hãy Import lại file để có mọi cột</td></tr>')+'</tbody></table></div>';
+}
+
+/* ---- TẠO ĐƠN HÀNG THỦ CÔNG (thay vì chỉ Import) ---- */
+function suggestSO(){ var d=serverToday().replace(/-/g,'').slice(2); return 'SO-'+d+'-'+Math.floor(100+Math.random()*900); }
+function openCreateOrder(){
+  var m=document.getElementById('main'); var skus=cache.skus||[];
+  var dl='<datalist id="coSkuList">'+skus.map(function(s){return '<option value="'+String(s.sku_code).replace(/"/g,'&quot;')+'">'+String(s.product_name||'').replace(/"/g,'&quot;')+'</option>';}).join('')+'</datalist>';
+  function f(id,label,v,ph){ return '<div><label class="text-xs text-slate-500">'+label+'</label><input id="'+id+'" class="field" value="'+(v==null?'':String(v).replace(/"/g,'&quot;'))+'" placeholder="'+(ph||'')+'"></div>'; }
+  m.innerHTML=
+   '<button class="btn btn-ghost mb-4" onclick="go(\'orders\')">← Danh sách đơn</button>'+
+   '<div class="sectiontitle mb-3">Tạo đơn hàng mới</div>'+dl+
+   '<div class="card p-5 mb-3"><div class="font-semibold mb-3 text-slate-700">Thông tin đơn</div>'+
+     '<div class="grid grid-cols-2 md:grid-cols-3 gap-2">'+
+       f('co_so','SO # (mã đơn)',suggestSO())+f('co_cust','Khách hàng')+f('co_po','Customer PO')+
+       f('co_sales','NV bán')+f('co_state','Bang (State)')+f('co_class','Class')+
+       f('co_locgrp','Location Group')+
+       '<div><label class="text-xs text-slate-500">Ngày đặt</label><input id="co_date" type="date" class="field" value="'+serverToday()+'"></div>'+
+       '<div><label class="text-xs text-slate-500">Ngày giao</label><input id="co_deliv" type="date" class="field"></div>'+
+       '<div><label class="text-xs text-slate-500">Trạng thái</label><select id="co_status" class="field"><option>Issued</option><option>In Progress</option><option>Fulfilled</option></select></div>'+
+     '</div></div>'+
+   '<div class="card p-5 mb-3">'+
+     '<div class="flex items-center justify-between mb-2"><div class="font-semibold text-slate-700">Dòng hàng</div><button class="btn btn-ghost" onclick="coAddLine()">➕ Thêm dòng</button></div>'+
+     '<div class="overflow-auto"><table style="white-space:nowrap"><thead><tr><th>SKU</th><th>Tên sản phẩm</th><th class="text-center">SL</th><th>ĐVT</th><th class="text-right">Đơn giá</th><th class="text-right">Thành tiền</th><th></th></tr></thead><tbody id="coLines"></tbody></table></div>'+
+     '<div class="text-right mt-3 font-bold">Tổng tiền: <span style="color:var(--green)" id="coTotal">$0</span></div>'+
+   '</div>'+
+   '<button class="btn btn-navy w-full" onclick="saveOrder()">💾 Lưu đơn hàng</button>'+
+   '<div id="coMsg" class="text-center text-sm mt-2"></div>';
+  coAddLine();
+}
+function coAddLine(){
+  var tb=document.getElementById('coLines'); if(!tb) return;
+  var tr=document.createElement('tr');
+  tr.innerHTML='<td><input class="field co-sku" list="coSkuList" oninput="coFillName(this)" placeholder="Mã SKU" style="min-width:130px"></td>'+
+    '<td><input class="field co-name" placeholder="Tên sản phẩm" style="min-width:160px"></td>'+
+    '<td><input class="field co-qty" type="number" min="0" value="1" style="width:74px;text-align:center" oninput="coRecalc()"></td>'+
+    '<td><input class="field co-uom" value="ea" style="width:66px"></td>'+
+    '<td><input class="field co-price" type="number" min="0" step="0.01" value="0" style="width:112px;text-align:right" oninput="coRecalc()"></td>'+
+    '<td class="co-amt text-right">$0</td>'+
+    '<td><button class="btn btn-ghost" onclick="coDelLine(this)" style="min-height:40px;padding:0 12px">✕</button></td>';
+  tb.appendChild(tr); coRecalc();
+}
+function coDelLine(btn){ var tr=btn.closest('tr'); if(tr) tr.remove(); coRecalc(); }
+function coFillName(inp){
+  var tr=inp.closest('tr'); if(!tr) return; var nm=tr.querySelector('.co-name');
+  var s=(cache.skus||[]).filter(function(x){return String(x.sku_code)===inp.value.trim();})[0];
+  if(s && nm && !nm.value) nm.value=s.product_name||'';
+}
+function coRecalc(){
+  var total=0;
+  [].forEach.call(document.querySelectorAll('#coLines tr'),function(tr){
+    var q=parseFloat(tr.querySelector('.co-qty').value)||0, pr=parseFloat(tr.querySelector('.co-price').value)||0;
+    var amt=q*pr; total+=amt; tr.querySelector('.co-amt').textContent=fmtMoney(amt);
+  });
+  var t=document.getElementById('coTotal'); if(t) t.textContent=fmtMoney(total);
+}
+async function saveOrder(){
+  var g=function(id){return (document.getElementById(id)||{}).value||'';};
+  var msg=document.getElementById('coMsg');
+  var lines=[];
+  [].forEach.call(document.querySelectorAll('#coLines tr'),function(tr){
+    var sku=tr.querySelector('.co-sku').value.trim(); if(!sku) return;
+    var q=parseInt(tr.querySelector('.co-qty').value,10)||0, pr=parseFloat(tr.querySelector('.co-price').value)||0;
+    lines.push({sku_code:sku, product_name:tr.querySelector('.co-name').value.trim(), qty_ordered:q, uom:tr.querySelector('.co-uom').value.trim(), ordered_price:Math.round(q*pr*100)/100});
+  });
+  if(!g('co_so').trim()){ if(msg){msg.style.color='var(--red)';msg.textContent='Hãy nhập SO # (mã đơn)';} return; }
+  if(!lines.length){ if(msg){msg.style.color='var(--red)';msg.textContent='Đơn cần ít nhất 1 dòng có mã SKU';} return; }
+  var header={so_number:g('co_so').trim(),customer:g('co_cust'),customer_po:g('co_po'),sales_person:g('co_sales'),state:g('co_state'),so_class:g('co_class'),location_group:g('co_locgrp'),so_date:g('co_date'),delivery_date:g('co_deliv'),status:g('co_status')};
+  if(msg){msg.style.color='var(--muted)';msg.textContent='Đang lưu…';}
+  try{
+    var r=await api('createOrder',{header:header, lines:lines});
+    await refreshCache();
+    flashAlert('good','Tạo đơn','Đã tạo '+r.so_number+' · '+r.lines+' dòng'+(r.new_sku?' · +'+r.new_sku+' SKU mới':''), true);
+    go('orders');
+  }catch(e){ if(msg){msg.style.color='var(--red)';msg.textContent=e.message;} }
 }
 
 /* ====================================================================
