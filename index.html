@@ -1815,9 +1815,9 @@ function paintDashboard(m,d){
   '<div id="ovFilter" class="card p-3 mb-4"><div class="flex flex-wrap items-end gap-2">'+
     '<div><label class="text-xs text-slate-500">Năm</label><select id="ovYear" class="field" style="min-width:96px" onchange="applyOverviewFilter(false)"></select></div>'+
     '<div><label class="text-xs text-slate-500">Tháng</label><select id="ovMonth" class="field" style="min-width:118px" onchange="applyOverviewFilter(false)"></select></div>'+
-    '<div><label class="text-xs text-slate-500">Từ</label><input type="date" id="ovFrom" class="field" style="min-width:150px" onchange="ovDateChanged()"></div>'+
-    '<div><label class="text-xs text-slate-500">Đến</label><input type="date" id="ovTo" class="field" style="min-width:150px" onchange="ovDateChanged()"></div>'+
-    '<div><label class="text-xs text-slate-500">Nhóm</label><select id="ovGroup" class="field" style="min-width:140px" onchange="applyOverviewFilter(true)"></select></div>'+
+    '<div class="hidden sm:block"><label class="text-xs text-slate-500">Từ</label><input type="date" id="ovFrom" class="field" style="min-width:150px" onchange="ovDateChanged()"></div>'+
+    '<div class="hidden sm:block"><label class="text-xs text-slate-500">Đến</label><input type="date" id="ovTo" class="field" style="min-width:150px" onchange="ovDateChanged()"></div>'+
+    '<div class="hidden sm:block"><label class="text-xs text-slate-500">Nhóm</label><select id="ovGroup" class="field" style="min-width:140px" onchange="applyOverviewFilter(true)"></select></div>'+
   '</div></div>'+
   '<div id="salesKpi" class="mb-4"><div class="grid grid-cols-2 md:grid-cols-4 gap-3"><div class="card p-4 text-center text-slate-400 py-6">Đang tải…</div></div></div>'+
   '<div class="grid md:grid-cols-2 gap-3 mb-3">'+
