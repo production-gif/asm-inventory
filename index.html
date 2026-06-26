@@ -887,7 +887,8 @@ var I18N_PAIRS = [
   ['Doanh số theo ngày & nhóm (đã xuất)','Sales by day & group (shipped)'],['Doanh số theo ngày & nhóm','Sales by day & group'],
   ['ĐÃ XUẤT','SHIPPED'],['ĐÃ NHẬN','RECEIVED'],['đã xuất','shipped'],['đã nhận','received'],
   ['Tổng đã xuất','Total shipped'],['Tổng đã nhận','Total received'],
-  ['so với kỳ trước','vs previous period'],['Mới (kỳ trước = 0)','New (prev period = 0)'],
+  ['so với kỳ trước','vs previous period'],['Mới','New'],
+  ['So với cùng kỳ','vs same period'],['Doanh số ngày hôm nay','Sales today'],
   ['Doanh số kỳ này','This period sales'],
   ['Năm','Year'],['Tháng','Month'],['Nhóm','Group'],['Cả năm','Whole year'],['Tùy chọn','Custom'],['Tất cả nhóm','All groups'],
   ['Mã chưa có nhóm','SKUs without group'],['← Tổng quan','← Overview'],['Bổ sung nhóm','Assign groups'],
@@ -2002,23 +2003,27 @@ function curMonthRange(){ var t=serverToday(); return {from:t.slice(0,8)+'01', t
 function prevMonthRange(){ var t=serverToday(); var y=+t.slice(0,4), m=+t.slice(5,7), day=+t.slice(8,10);
   var py=(m===1)?y-1:y, pm=(m===1)?12:m-1; var dim=new Date(Date.UTC(py,pm,0)).getUTCDate(); var d=Math.min(day,dim);
   return {from:py+'-'+pad(pm)+'-01', to:py+'-'+pad(pm)+'-'+pad(d)}; }
-function growthHTML(c,p){
-  if(p>0){ var g=(c-p)/p*100; var up=g>=0; return '<div class="text-xs mt-1" style="color:'+(up?'var(--green)':'var(--red)')+'">'+(up?'▲ +':'▼ ')+Math.abs(g).toFixed(0)+'%</div>'; }
-  if(c>0) return '<div class="text-xs mt-1" style="color:var(--green)">'+L('Mới (kỳ trước = 0)')+'</div>';
-  return '<div class="text-xs mt-1 text-slate-400">—</div>'; }
-function kpiG(label,val,color,icon,c,p){ return '<div class="card p-4"><div class="kpi-top"><span class="kpi-label">'+label+'</span><span class="kpi-dot" style="background:'+color+';color:#fff">'+(icon||'')+'</span></div><div class="num" style="color:'+color+';font-size:23px">'+val+'</div>'+growthHTML(c,p)+'</div>'; }
+function growthTxt(c,p){
+  if(p>0){ var g=(c-p)/p*100; var up=g>=0; return '<span style="color:'+(up?'var(--green)':'var(--red)')+'">'+(up?'▲ +':'▼ ')+Math.abs(g).toFixed(0)+'%</span>'; }
+  if(c>0) return '<span style="color:var(--green)">'+L('Mới')+'</span>';
+  return '<span class="text-slate-400">—</span>'; }
+function kpiG(label,val,color,icon,c,p,today){ return '<div class="card p-4"><div class="kpi-top"><span class="kpi-label">'+label+'</span><span class="kpi-dot" style="background:'+color+';color:#fff">'+(icon||'')+'</span></div>'+
+  '<div class="num" style="color:'+color+';font-size:23px">'+val+'</div>'+
+  '<div class="text-xs mt-1">'+L('So với cùng kỳ')+': '+growthTxt(c,p)+'</div>'+
+  '<div class="text-xs text-slate-500">'+L('Doanh số ngày hôm nay')+': <b style="color:'+color+'">'+fmtMoney(today||0)+'</b></div></div>'; }
 async function loadSalesKPI(){
   var box=document.getElementById('salesKpi'); if(!box) return;
   if(!_ov.from||!_ov.to) return;
-  var cur={from:_ov.from,to:_ov.to}, prev=prevEqualRange(cur.from,cur.to);
+  var cur={from:_ov.from,to:_ov.to}, prev=prevEqualRange(cur.from,cur.to), today=serverToday();
   try{
     var A=await api('reportSales',{from:cur.from,to:cur.to});
     var B=await api('reportSales',{from:prev.from,to:prev.to});
+    var T=await api('reportSales',{from:today,to:today});
     function agg(rep){ var o={ship:{},recv:{},shipAll:0,recvAll:0}; (rep.rows||[]).forEach(function(r){ o.shipAll+=r.ship_total||0; o.recvAll+=r.recv_total||0; (rep.groups||[]).forEach(function(g){ o.ship[g]=(o.ship[g]||0)+((r.ship&&r.ship[g])||0); o.recv[g]=(o.recv[g]||0)+((r.recv&&r.recv[g])||0); }); }); return o; }
-    var a=agg(A), b=agg(B);
+    var a=agg(A), b=agg(B), t=agg(T);
     var GROUPS = _ov.group ? [_ov.group] : ['Mattress','Foam','Ecoflex'];
-    var row1=GROUPS.map(function(g){return kpiG(g+' '+L('đã xuất'), fmtMoney(a.ship[g]||0),'var(--green)','📤', a.ship[g]||0, b.ship[g]||0);}).join('')+kpiG(L('Tổng đã xuất'), fmtMoney(a.shipAll),'var(--navy)','📤', a.shipAll, b.shipAll);
-    var row2=GROUPS.map(function(g){return kpiG(g+' '+L('đã nhận'), fmtMoney(a.recv[g]||0),'var(--amber)','📥', a.recv[g]||0, b.recv[g]||0);}).join('')+kpiG(L('Tổng đã nhận'), fmtMoney(a.recvAll),'var(--navy)','📥', a.recvAll, b.recvAll);
+    var row1=GROUPS.map(function(g){return kpiG(g+' '+L('đã xuất'), fmtMoney(a.ship[g]||0),'var(--green)','📤', a.ship[g]||0, b.ship[g]||0, t.ship[g]||0);}).join('')+kpiG(L('Tổng đã xuất'), fmtMoney(a.shipAll),'var(--navy)','📤', a.shipAll, b.shipAll, t.shipAll);
+    var row2=GROUPS.map(function(g){return kpiG(g+' '+L('đã nhận'), fmtMoney(a.recv[g]||0),'var(--amber)','📥', a.recv[g]||0, b.recv[g]||0, t.recv[g]||0);}).join('')+kpiG(L('Tổng đã nhận'), fmtMoney(a.recvAll),'var(--navy)','📥', a.recvAll, b.recvAll, t.recvAll);
     box.innerHTML='<div class="text-xs text-slate-400 mb-2">'+L('Doanh số kỳ này')+' ('+cur.from.slice(5)+' → '+cur.to.slice(5)+') · '+L('so với kỳ trước')+'</div>'+
       '<div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">'+row1+'</div>'+
       '<div class="grid grid-cols-2 md:grid-cols-4 gap-3">'+row2+'</div>';
