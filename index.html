@@ -426,7 +426,12 @@ function fmtMoney(n){ n=+n||0; return '$'+n.toLocaleString('en-US',{maximumFract
 function val(arr,i){ return (i>=0 && i<arr.length)?String(arr[i]).trim():''; }
 var DIM_DIV={cm:1e6,mm:1e9,inch:61023.7,m:1};
 function computeVolume(L,W,H,unit){ L=parseFloat(L);W=parseFloat(W);H=parseFloat(H); if(!L||!W||!H) return ''; return Math.round(L*W*H/(DIM_DIV[unit||'cm']||1e6)*1000)/1000; }
-function dateOrNull(s){ s=String(s||'').trim(); if(!s) return null; var m=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); if(m) return m[3]+'-'+pad(+m[1])+'-'+pad(+m[2]); if(/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0,10); return null; }
+function dateOrNull(s){ s=String(s||'').trim(); if(!s) return null;
+  // M/D/YYYY hoặc M/D/YY (năm 2 chữ số -> 20YY). VD: 1/1/26 -> 2026-01-01 ; 12/31/25 -> 2025-12-31
+  var m=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/);
+  if(m){ var y=m[3]; if(y.length===2) y='20'+y; return y+'-'+pad(+m[1])+'-'+pad(+m[2]); }
+  if(/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0,10);
+  return null; }
 function pickSO(row){ var c=(row.perSO||[]).filter(function(s){return s.scanned<s.ordered;}).sort(function(a,b){return String(a.delivery_date||'9999').localeCompare(String(b.delivery_date||'9999'));}); return c.length?c[0].so_number:''; }
 async function hashPin(pin){ var data=new TextEncoder().encode(PIN_SALT+':'+String(pin)); var buf=await crypto.subtle.digest('SHA-256',data); var b=new Uint8Array(buf),s=''; for(var i=0;i<b.length;i++) s+=String.fromCharCode(b[i]); return btoa(s); }
 async function audit(user,action,details){ try{ await sb.from('audit_log').insert({username:user,action:action,details:details||''}); }catch(e){} }
@@ -707,7 +712,7 @@ async function api(action, p){
       var MAP={so_number:'SO #',customer:'Customer',customer_po:'Customer PO',sales_person:'Sales Person',state:'State / Province',so_class:'Class',location_group:'Location Group',status:'Order Status',so_date:'Order Date Issued',delivery_date:'Order Date Scheduled',fulfilled_date:'Order Date Fulfilled',sku_code:'Product Number',product_name:'Description',qty_ordered:'Ordered Qty',uom:'UOM',ordered_price:'Ordered Price',qty_shipped:'Shipped Qty',shipped_price:'Shipped Price',remaining_qty:'Remaining Qty',remaining_price:'Remaining Price',item_status:'Item Status',item_type:'Item Type',item_date_scheduled:'Item Date Scheduled',item_date_fulfilled:'Item Date Fulfilled'};
       var ix2={}; Object.keys(MAP).forEach(function(f){ var k=nz(MAP[f]); ix2[f]=(hnorm[k]!=null?hnorm[k]:-1); });
       var soH={}, soL=[], skuSeen={}, soAmt={};
-      for(var j=hdi+1;j<rw.length;j++){ var rr=rw[j]; if(!rr||!rr.length)continue; var so=val(rr,ix2.so_number),sku3=val(rr,ix2.sku_code); if(!so||!sku3)continue; var st=val(rr,ix2.status); /* ghi nhận MỌI trạng thái, kể cả Estimate (giữ nguyên status) */
+      for(var j=hdi+1;j<rw.length;j++){ var rr=rw[j]; if(!rr||!rr.length)continue; var so=val(rr,ix2.so_number),sku3=val(rr,ix2.sku_code); if(!so||!sku3)continue; if(nz(so)==='so #')continue; /* bỏ dòng header lặp lại giữa file */ var st=val(rr,ix2.status); /* ghi nhận MỌI trạng thái, kể cả Estimate (giữ nguyên status) */
         // raw = TOÀN BỘ cột A->Z của dòng này (header -> giá trị)
         var raw={}; for(var ci=0;ci<hd.length;ci++){ var key=String(hd[ci]||'').trim(); if(key) raw[key]=val(rr,ci); }
         var op=moneyNum(val(rr,ix2.ordered_price));
@@ -717,6 +722,7 @@ async function api(action, p){
         if(!skuSeen[sku3]) skuSeen[sku3]=val(rr,ix2.product_name);
       }
       var soArr=Object.keys(soH);
+      var withDeliv=soArr.filter(function(s){return !!soH[s].delivery_date;}).length;
       soArr.forEach(function(s){ soH[s].total_amount=Math.round((soAmt[s]||0)*100)/100; });
       for(var a=0;a<soArr.length;a+=400){ chk(await sb.from('sales_orders').upsert(soArr.slice(a,a+400).map(function(s){return soH[s];}))); }
       for(var d=0;d<soArr.length;d+=100){ chk(await sb.from('so_lines').delete().in('so_number',soArr.slice(d,d+100))); }
@@ -725,7 +731,7 @@ async function api(action, p){
       var newSk=Object.keys(skuSeen).filter(function(s){return !ex2[s];}).map(function(s){return {sku_code:s,product_name:skuSeen[s],unit:'ea',dim_unit:'inch',active:true};});
       for(var f=0;f<newSk.length;f+=400){ chk(await sb.from('master_sku').insert(newSk.slice(f,f+400))); }
       await audit(session.username,'import_so','SO='+soArr.length+' lines='+soL.length+' newsku='+newSk.length);
-      return {added_so:soArr.length,added_lines:soL.length,added_sku:newSk.length,total_so:soArr.length};
+      return {added_so:soArr.length,added_lines:soL.length,added_sku:newSk.length,total_so:soArr.length,with_delivery:withDeliv};
     }
     case 'createOrder': {
       // Tạo 1 đơn hàng thủ công (cùng cấu trúc như importSO để mọi nơi dùng chung)
@@ -2152,7 +2158,7 @@ function adminImport(){
     '<input type="file" id="soFile" accept=".csv" class="field mb-2" style="padding-top:12px"><button class="btn btn-navy w-full" onclick="doImportSO()">Import SO</button><div id="impMsg" class="text-center text-sm mt-2"></div></div>';
 }
 function doImportSO(){ var f=document.getElementById('soFile').files[0]; if(!f){alert(L('Chọn file CSV'));return;} var msg=document.getElementById('impMsg'); msg.style.color='var(--navy)'; msg.textContent='Đang đọc file…';
-  var rd=new FileReader(); rd.onload=function(){ api('importSO',{csvText:rd.result}).then(function(d){ msg.style.color='var(--green)'; msg.textContent='✓ '+d.total_so+' SO, +'+d.added_lines+' dòng, +'+d.added_sku+' SKU mới'; refreshCache(); }).catch(function(e){ msg.style.color='var(--red)'; msg.textContent=e.message; }); }; rd.readAsText(f);
+  var rd=new FileReader(); rd.onload=function(){ api('importSO',{csvText:rd.result}).then(function(d){ msg.style.color='var(--green)'; msg.textContent='✓ '+d.total_so+' SO, +'+d.added_lines+' dòng, +'+d.added_sku+' SKU mới · ngày giao: '+d.with_delivery+'/'+d.total_so; refreshCache(); }).catch(function(e){ msg.style.color='var(--red)'; msg.textContent=e.message; }); }; rd.readAsText(f);
 }
 function adminSettings(){ var s=cache.settings;
   document.getElementById('adminBody').innerHTML=
