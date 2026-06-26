@@ -685,7 +685,7 @@ async function api(action, p){
       var MAP={so_number:'SO #',customer:'Customer',customer_po:'Customer PO',sales_person:'Sales Person',state:'State / Province',so_class:'Class',location_group:'Location Group',status:'Order Status',so_date:'Order Date Issued',delivery_date:'Order Date Scheduled',fulfilled_date:'Order Date Fulfilled',sku_code:'Product Number',product_name:'Description',qty_ordered:'Ordered Qty',uom:'UOM',ordered_price:'Ordered Price',qty_shipped:'Shipped Qty',shipped_price:'Shipped Price',remaining_qty:'Remaining Qty',remaining_price:'Remaining Price',item_status:'Item Status',item_type:'Item Type',item_date_scheduled:'Item Date Scheduled',item_date_fulfilled:'Item Date Fulfilled'};
       var ix2={}; Object.keys(MAP).forEach(function(f){ix2[f]=hd.indexOf(MAP[f]);});
       var soH={}, soL=[], skuSeen={}, soAmt={};
-      for(var j=hdi+1;j<rw.length;j++){ var rr=rw[j]; if(!rr||!rr.length)continue; var so=val(rr,ix2.so_number),sku3=val(rr,ix2.sku_code); if(!so||!sku3)continue; var st=val(rr,ix2.status); if(st==='Estimate')continue;
+      for(var j=hdi+1;j<rw.length;j++){ var rr=rw[j]; if(!rr||!rr.length)continue; var so=val(rr,ix2.so_number),sku3=val(rr,ix2.sku_code); if(!so||!sku3)continue; var st=val(rr,ix2.status); /* ghi nhận MỌI trạng thái, kể cả Estimate (giữ nguyên status) */
         // raw = TOÀN BỘ cột A->Z của dòng này (header -> giá trị)
         var raw={}; for(var ci=0;ci<hd.length;ci++){ var key=String(hd[ci]||'').trim(); if(key) raw[key]=val(rr,ci); }
         var op=moneyNum(val(rr,ix2.ordered_price));
@@ -2021,12 +2021,15 @@ async function loadSalesKPI(){
     var T=await api('reportSales',{from:today,to:today});
     function agg(rep){ var o={ship:{},recv:{},shipAll:0,recvAll:0}; (rep.rows||[]).forEach(function(r){ o.shipAll+=r.ship_total||0; o.recvAll+=r.recv_total||0; (rep.groups||[]).forEach(function(g){ o.ship[g]=(o.ship[g]||0)+((r.ship&&r.ship[g])||0); o.recv[g]=(o.recv[g]||0)+((r.recv&&r.recv[g])||0); }); }); return o; }
     var a=agg(A), b=agg(B), t=agg(T);
-    var GROUPS = _ov.group ? [_ov.group] : ['Mattress','Foam','Ecoflex'];
+    // Lấy nhóm THỰC TẾ trong kỳ (bỏ "(Khác)") -> tự đổi/thêm theo nhóm hiện có
+    var allG=(A.groups||[]).filter(function(g){ return g && g!=='(Khác)'; });
+    var GROUPS = _ov.group ? [_ov.group] : allG;
     var row1=GROUPS.map(function(g){return kpiG(g+' '+L('đã xuất'), fmtMoney(a.ship[g]||0),'var(--green)','📤', a.ship[g]||0, b.ship[g]||0, t.ship[g]||0);}).join('')+kpiG(L('Tổng đã xuất'), fmtMoney(a.shipAll),'var(--navy)','📤', a.shipAll, b.shipAll, t.shipAll);
     var row2=GROUPS.map(function(g){return kpiG(g+' '+L('đã nhận'), fmtMoney(a.recv[g]||0),'var(--amber)','📥', a.recv[g]||0, b.recv[g]||0, t.recv[g]||0);}).join('')+kpiG(L('Tổng đã nhận'), fmtMoney(a.recvAll),'var(--navy)','📥', a.recvAll, b.recvAll, t.recvAll);
+    var gridStyle='display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px';
     box.innerHTML='<div class="text-xs text-slate-400 mb-2">'+L('Doanh số kỳ này')+' ('+cur.from.slice(5)+' → '+cur.to.slice(5)+') · '+L('so với kỳ trước')+'</div>'+
-      '<div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">'+row1+'</div>'+
-      '<div class="grid grid-cols-2 md:grid-cols-4 gap-3">'+row2+'</div>';
+      '<div style="'+gridStyle+'" class="mb-3">'+row1+'</div>'+
+      '<div style="'+gridStyle+'">'+row2+'</div>';
   }catch(e){ box.innerHTML='<div class="card p-3">'+e.message+'</div>'; }
 }
 
@@ -2111,7 +2114,7 @@ async function saveUser(){ try{ await api('saveUser',{username:document.getEleme
 function adminImport(){
   document.getElementById('adminBody').innerHTML=
   '<div class="card p-5"><div class="font-semibold mb-1 text-slate-700">Import Sales Order từ CSV</div>'+
-    '<p class="text-sm text-slate-500 mb-3">File ERP "Sales Order Summary". Tự nhận: SO #, Customer, Product Number, Description, Ordered Qty, Order Status… Báo giá (Estimate) tự bỏ qua.</p>'+
+    '<p class="text-sm text-slate-500 mb-3">File ERP "Sales Order Summary". Tự nhận: SO #, Customer, Product Number, Description, Ordered Qty, Order Status… Ghi nhận mọi trạng thái (kể cả Estimate).</p>'+
     '<input type="file" id="soFile" accept=".csv" class="field mb-2" style="padding-top:12px"><button class="btn btn-navy w-full" onclick="doImportSO()">Import SO</button><div id="impMsg" class="text-center text-sm mt-2"></div></div>';
 }
 function doImportSO(){ var f=document.getElementById('soFile').files[0]; if(!f){alert(L('Chọn file CSV'));return;} var msg=document.getElementById('impMsg'); msg.style.color='var(--navy)'; msg.textContent='Đang đọc file…';
