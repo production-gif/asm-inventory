@@ -480,9 +480,11 @@ async function api(action, p){
       await audit(session.username,'save_sku',String(p.sku_code).trim()); return {saved:true};
     }
     case 'setSkuGroup': {
-      // Chỉ cập nhật nhóm cho 1 SKU (không đụng các trường khác)
+      // Gán nhóm cho 1 SKU. Dùng upsert -> nếu SKU chưa có trong danh mục sẽ TẠO mới.
+      // Chỉ ghi sku_code + sku_group (+product_name nếu có) -> không đụng các trường khác của bản ghi cũ.
       var skuG=String(p.sku_code).trim(), grp=(p.sku_group||'').trim();
-      chk(await sb.from('master_sku').update({sku_group:grp}).eq('sku_code',skuG));
+      var payload={sku_code:skuG, sku_group:grp}; if(p.product_name) payload.product_name=p.product_name;
+      chk(await sb.from('master_sku').upsert(payload));
       await audit(session.username,'set_sku_group',skuG+' -> '+grp); return {sku_code:skuG, sku_group:grp};
     }
     case 'saveVehicle': {
@@ -620,20 +622,22 @@ async function api(action, p){
       var toD=p.to||localDate(new Date()); var fromD=p.from||addDays(toD,-29);
       var heads=chk(await sb.from('sales_orders').select('so_number,delivery_date').gte('delivery_date',fromD).lte('delivery_date',toD))||[];
       var hmapS={}, soNumsS=[]; heads.forEach(function(h){ if(h.delivery_date){ hmapS[h.so_number]=String(h.delivery_date).slice(0,10); soNumsS.push(h.so_number); } });
-      var linesS=[]; for(var ci=0;ci<soNumsS.length;ci+=200){ linesS=linesS.concat(chk(await sb.from('so_lines').select('so_number,sku_code,qty_shipped,shipped_price,qty_ordered,ordered_price').in('so_number',soNumsS.slice(ci,ci+200)))||[]); }
+      var linesS=[]; for(var ci=0;ci<soNumsS.length;ci+=200){ linesS=linesS.concat(chk(await sb.from('so_lines').select('so_number,sku_code,product_name,qty_shipped,shipped_price,qty_ordered,ordered_price').in('so_number',soNumsS.slice(ci,ci+200)))||[]); }
       var gmapS={}; (chk(await sb.from('master_sku').select('sku_code,sku_group'))||[]).forEach(function(s){ gmapS[s.sku_code]=(s.sku_group||'').trim(); });
-      var byDate={}, groupsSet={};
-      linesS.forEach(function(l){ var d=hmapS[l.so_number]; if(!d) return; var g=gmapS[l.sku_code]||'(Khác)';
+      var byDate={}, groupsSet={}, ungAgg={};
+      linesS.forEach(function(l){ var d=hmapS[l.so_number]; if(!d) return; var hasG=!!gmapS[l.sku_code]; var g=hasG?gmapS[l.sku_code]:'(Khác)';
         var sv=+l.shipped_price||0, sq=+l.qty_shipped||0, ov=+l.ordered_price||0, oq=+l.qty_ordered||0;
         if(sv===0&&sq===0&&ov===0&&oq===0) return; groupsSet[g]=1;
+        if(!hasG){ var k=l.sku_code; if(!ungAgg[k]) ungAgg[k]={sku_code:k, product_name:l.product_name||k, in_master:gmapS.hasOwnProperty(k), val_ship:0, val_recv:0, qty_ship:0, qty_recv:0}; ungAgg[k].val_ship+=sv; ungAgg[k].val_recv+=ov; ungAgg[k].qty_ship+=sq; ungAgg[k].qty_recv+=oq; }
         if(!byDate[d]) byDate[d]={ship:0,recv:0,qship:0,qrecv:0,gs:{},gr:{},qsg:{}};
         byDate[d].ship+=sv; byDate[d].qship+=sq; byDate[d].gs[g]=(byDate[d].gs[g]||0)+sv; byDate[d].qsg[g]=(byDate[d].qsg[g]||0)+sq;
         byDate[d].recv+=ov; byDate[d].qrecv+=oq; byDate[d].gr[g]=(byDate[d].gr[g]||0)+ov; });
       var groups=Object.keys(groupsSet).sort();
+      var ungrouped=Object.keys(ungAgg).map(function(k){var u=ungAgg[k]; u.val_ship=r2(u.val_ship); u.val_recv=r2(u.val_recv); return u;}).sort(function(a,b){return (b.val_ship+b.val_recv)-(a.val_ship+a.val_recv);});
       function r2(x){ return Math.round((x||0)*100)/100; }
       var dayList=[]; for(var dd=fromD; dd<=toD; dd=addDays(dd,1)){ dayList.push(dd); if(dayList.length>370) break; }
       var rows=dayList.map(function(d){ var o=byDate[d]; var row={date:d, ship_total:o?r2(o.ship):0, recv_total:o?r2(o.recv):0, qty_ship:o?o.qship:0, qty_recv:o?o.qrecv:0, ship:{}, recv:{}, qs:{}}; groups.forEach(function(g){ row.ship[g]=(o&&o.gs[g])?r2(o.gs[g]):0; row.recv[g]=(o&&o.gr[g])?r2(o.gr[g]):0; row.qs[g]=(o&&o.qsg[g])?o.qsg[g]:0; }); return row; });
-      return {from:fromD, to:toD, groups:groups, rows:rows};
+      return {from:fromD, to:toD, groups:groups, rows:rows, ungrouped:ungrouped};
     }
 
     case 'importSKU': {
@@ -890,6 +894,9 @@ var I18N_PAIRS = [
   ['Gán nhóm cho các SKU bên dưới (gõ tên nhóm có sẵn hoặc nhóm mới). Lưu tự động khi rời ô.','Assign a group to the SKUs below (type an existing or new group). Saved automatically.'],
   ['🔍 Tìm SKU / tên...','🔍 Find SKU / name...'],['Nhập nhóm...','Enter group...'],['Tất cả SKU đã có nhóm ✓','All SKUs have a group ✓'],
   ['Các mã này rơi vào cột "(Khác)" trong báo cáo.','These fall under the "(Other)" column in reports.'],
+  ['Đã nhận','Received'],['chưa có trong danh mục','not in catalog'],
+  ['Tất cả mã trong kỳ đã có nhóm ✓','All SKUs in this period have a group ✓'],
+  ['Những mã phát sinh trong kỳ nhưng chưa gắn nhóm (cột "(Khác)"). Gõ nhóm có sẵn hoặc nhóm mới — lưu tự động.','SKUs active in this period without a group (the "(Other)" column). Type an existing or new group — saved automatically.'],
   ['Từ','From'],['Đến','To'],['Tổng GT','Total value'],['SL','Qty'],['Tổng','Total'],
   ['Số lượng','Quantity'],['Giá trị','Value'],['(Khác)','(Other)'],
   ['🔍 Gõ mã SKU...','🔍 Type SKU code...'],
@@ -1831,7 +1838,7 @@ function paintDashboard(m,d){
     '<div class="hidden sm:block"><label class="text-xs text-slate-500">Nhóm</label><select id="ovGroup" class="field" style="min-width:140px" onchange="applyOverviewFilter(true)"></select></div>'+
   '</div></div>'+
   '<div id="salesKpi" class="mb-4"><div class="grid grid-cols-2 md:grid-cols-4 gap-3"><div class="card p-4 text-center text-slate-400 py-6">Đang tải…</div></div></div>'+
-  (ungroupedList().length? '<div class="card p-4 mb-3" style="border-left:4px solid var(--amber)"><div class="flex items-center justify-between gap-3 flex-wrap"><div><div class="font-semibold" style="color:var(--amber)">⚠ '+ungroupedList().length+' mã chưa có nhóm</div><div class="text-xs text-slate-500">Các mã này rơi vào cột "(Khác)" trong báo cáo.</div></div><button class="btn btn-amber" onclick="openUngrouped()">Bổ sung nhóm</button></div></div>' : '')+
+  '<div id="ugBanner"></div>'+
   '<div class="grid md:grid-cols-2 gap-3 mb-3">'+
     '<div class="card p-4"><div class="font-semibold mb-2 text-slate-700">Nhập vs Xuất (30 ngày)</div><canvas id="cD1" height="180"></canvas></div>'+
     '<div class="card p-4"><div class="font-semibold mb-2 text-slate-700">Top 10 SKU bán chạy</div><canvas id="cD2" height="180"></canvas></div></div>'+
@@ -1875,37 +1882,41 @@ function kpi(label,val,color,icon){ return '<div class="card p-4"><div class="kp
 
 /* ---- MÀN HÌNH: MÃ CHƯA CÓ NHÓM (cảnh báo + gán nhóm nhanh) ---- */
 function ungroupedList(){ return (cache.skus||[]).filter(function(s){ return !(s.sku_group&&String(s.sku_group).trim()); }); }
+var _ugData=[];
 function openUngrouped(){
-  var m=document.getElementById('main'); var list=ungroupedList();
+  var m=document.getElementById('main'); var rep=window._salesRep||{ungrouped:[]}; _ugData=(rep.ungrouped||[]).slice();
   var groups=uniqSorted((cache.skus||[]).map(function(s){return s.sku_group;}));
   var dl='<datalist id="ugGroups">'+groups.map(function(g){return '<option value="'+String(g).replace(/"/g,'&quot;')+'">';}).join('')+'</datalist>';
   m.innerHTML=
    '<button class="btn btn-ghost mb-4" onclick="go(\'dashboard\')">← Tổng quan</button>'+
-   '<div class="sectiontitle mb-1">Mã chưa có nhóm <span id="ugCount" class="text-slate-400" style="font-weight:600">('+list.length+')</span></div>'+
-   '<div class="text-sm text-slate-500 mb-3">Gán nhóm cho các SKU bên dưới (gõ tên nhóm có sẵn hoặc nhóm mới). Lưu tự động khi rời ô.</div>'+dl+
+   '<div class="sectiontitle mb-1">Mã chưa có nhóm <span id="ugCount" class="text-slate-400" style="font-weight:600">('+_ugData.length+')</span></div>'+
+   '<div class="text-sm text-slate-500 mb-3">Những mã phát sinh trong kỳ nhưng chưa gắn nhóm (cột "(Khác)"). Gõ nhóm có sẵn hoặc nhóm mới — lưu tự động.</div>'+dl+
    '<input id="ugSearch" class="field mb-3" placeholder="🔍 Tìm SKU / tên..." oninput="renderUngrouped()">'+
-   '<div class="card overflow-auto"><table><thead><tr><th>Sản phẩm</th><th>Size</th><th class="text-center">m³</th><th style="min-width:180px">Nhóm</th></tr></thead><tbody id="ugBody"></tbody></table></div>';
+   '<div class="card overflow-auto"><table><thead><tr><th>Sản phẩm</th><th class="text-right">Đã xuất</th><th class="text-right">Đã nhận</th><th style="min-width:180px">Nhóm</th></tr></thead><tbody id="ugBody"></tbody></table></div>';
   renderUngrouped();
 }
-var _ugRows=[];
+function ugRemain(){ return _ugData.filter(function(x){return !x._done;}).length; }
 function renderUngrouped(){
   var q=((document.getElementById('ugSearch')||{}).value||'').toLowerCase();
-  _ugRows=ungroupedList().filter(function(s){return (s.sku_code+' '+(s.product_name||'')).toLowerCase().indexOf(q)>=0;}).slice(0,1500);
-  var c=document.getElementById('ugCount'); if(c) c.textContent='('+ungroupedList().length+')';
+  var rows=_ugData.filter(function(s){ return !s._done && (String(s.sku_code)+' '+(s.product_name||'')).toLowerCase().indexOf(q)>=0; });
+  var c=document.getElementById('ugCount'); if(c) c.textContent='('+ugRemain()+')';
   var b=document.getElementById('ugBody'); if(!b) return;
-  b.innerHTML=_ugRows.map(function(s){
-    return '<tr><td>'+(s.product_name||'')+'<div class="text-xs text-slate-400">'+s.sku_code+'</div></td><td>'+(s.size||'')+'</td><td class="text-center text-slate-500">'+(s.volume_m3||'-')+'</td>'+
+  b.innerHTML=rows.map(function(s){
+    return '<tr><td>'+(s.product_name||'')+'<div class="text-xs text-slate-400">'+s.sku_code+(s.in_master?'':' · <span style="color:var(--amber)">chưa có trong danh mục</span>')+'</div></td>'+
+      '<td class="text-right">'+(s.val_ship?fmtMoney(s.val_ship):'-')+'</td><td class="text-right">'+(s.val_recv?fmtMoney(s.val_recv):'-')+'</td>'+
       '<td><input class="field ug-inp" list="ugGroups" data-sku="'+String(s.sku_code).replace(/"/g,'&quot;')+'" placeholder="Nhập nhóm..." onchange="assignGroup(this)"></td></tr>';
-  }).join('')||'<tr><td colspan="4" class="text-center text-slate-400 py-8">Tất cả SKU đã có nhóm ✓</td></tr>';
+  }).join('')||'<tr><td colspan="4" class="text-center text-slate-400 py-8">Tất cả mã trong kỳ đã có nhóm ✓</td></tr>';
 }
 async function assignGroup(inp){
   var sku=inp.getAttribute('data-sku'), g=inp.value.trim(); if(!g) return;
+  var item=_ugData.filter(function(x){return String(x.sku_code)===String(sku);})[0];
   inp.disabled=true;
-  try{ await api('setSkuGroup',{sku_code:sku, sku_group:g});
-    var s=(cache.skus||[]).filter(function(x){return x.sku_code===sku;})[0]; if(s) s.sku_group=g;
-    try{ localStorage.setItem(CONFIG.cacheKey,JSON.stringify(cache)); }catch(e){}
+  try{ await api('setSkuGroup',{sku_code:sku, sku_group:g, product_name:item?item.product_name:''});
+    var s=(cache.skus||[]).filter(function(x){return x.sku_code===sku;})[0]; if(s){ s.sku_group=g; } try{ localStorage.setItem(CONFIG.cacheKey,JSON.stringify(cache)); }catch(e){}
+    if(item) item._done=true;
+    if(window._salesRep&&window._salesRep.ungrouped){ window._salesRep.ungrouped=window._salesRep.ungrouped.filter(function(x){return String(x.sku_code)!==String(sku);}); }
     inp.style.borderColor='var(--green)'; inp.style.color='var(--green)';
-    var c=document.getElementById('ugCount'); if(c) c.textContent='('+ungroupedList().length+')';
+    var c=document.getElementById('ugCount'); if(c) c.textContent='('+ugRemain()+')';
   }catch(e){ inp.disabled=false; inp.style.borderColor='var(--red)'; flashAlert('bad','LỖI', e.message); }
 }
 
@@ -1915,6 +1926,8 @@ async function loadSalesReport(){
   var box=document.getElementById('srBody'); if(box) box.innerHTML='<div class="text-center text-slate-400 py-6">Đang tải…</div>';
   try{
     var rep=await api('reportSales',{from:_ov.from,to:_ov.to}); window._salesRep=rep;
+    var ug=rep.ungrouped||[]; var bn=document.getElementById('ugBanner');
+    if(bn) bn.innerHTML = ug.length ? '<div class="card p-4 mb-3" style="border-left:4px solid var(--amber)"><div class="flex items-center justify-between gap-3 flex-wrap"><div><div class="font-semibold" style="color:var(--amber)">⚠ '+ug.length+' mã chưa có nhóm</div><div class="text-xs text-slate-500">Các mã này rơi vào cột "(Khác)" trong báo cáo.</div></div><button class="btn btn-amber" onclick="openUngrouped()">Bổ sung nhóm</button></div></div>' : '';
     var groups = _ov.group ? rep.groups.filter(function(g){return g===_ov.group;}) : rep.groups;
     if(document.getElementById('srBody')) document.getElementById('srBody').innerHTML=renderSalesTable(rep, groups);
     var labels=rep.rows.map(function(x){return x.date.slice(5);});
