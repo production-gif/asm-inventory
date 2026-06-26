@@ -479,6 +479,12 @@ async function api(action, p){
       chk(await sb.from('master_sku').upsert({ sku_code:String(p.sku_code).trim(), product_name:p.product_name||p.sku_code, line:p.line||'', size:p.size||'', thickness:p.thickness||'', category:p.category||'', sku_group:p.sku_group||'', unit:p.unit||'ea', image_url:p.image_url||'', length:numOrNull(p.length), width:numOrNull(p.width), height:numOrNull(p.height), dim_unit:p.dim_unit||'inch', volume_m3:(vol===''?null:vol), reorder_threshold:intOrNull(p.reorder_threshold), active:(String(p.active)==='false'?false:true) }));
       await audit(session.username,'save_sku',String(p.sku_code).trim()); return {saved:true};
     }
+    case 'setSkuGroup': {
+      // Chỉ cập nhật nhóm cho 1 SKU (không đụng các trường khác)
+      var skuG=String(p.sku_code).trim(), grp=(p.sku_group||'').trim();
+      chk(await sb.from('master_sku').update({sku_group:grp}).eq('sku_code',skuG));
+      await audit(session.username,'set_sku_group',skuG+' -> '+grp); return {sku_code:skuG, sku_group:grp};
+    }
     case 'saveVehicle': {
       var id=p.vehicle_id||('VH-'+ymdhms());
       chk(await sb.from('vehicles').upsert({ vehicle_id:id, vehicle_name:p.vehicle_name||'', plate_no:p.plate_no||'', capacity_m3:numOrNull(p.capacity_m3), active:true }));
@@ -880,6 +886,10 @@ var I18N_PAIRS = [
   ['so với kỳ trước','vs previous period'],['Mới (kỳ trước = 0)','New (prev period = 0)'],
   ['Doanh số kỳ này','This period sales'],
   ['Năm','Year'],['Tháng','Month'],['Nhóm','Group'],['Cả năm','Whole year'],['Tùy chọn','Custom'],['Tất cả nhóm','All groups'],
+  ['Mã chưa có nhóm','SKUs without group'],['← Tổng quan','← Overview'],['Bổ sung nhóm','Assign groups'],
+  ['Gán nhóm cho các SKU bên dưới (gõ tên nhóm có sẵn hoặc nhóm mới). Lưu tự động khi rời ô.','Assign a group to the SKUs below (type an existing or new group). Saved automatically.'],
+  ['🔍 Tìm SKU / tên...','🔍 Find SKU / name...'],['Nhập nhóm...','Enter group...'],['Tất cả SKU đã có nhóm ✓','All SKUs have a group ✓'],
+  ['Các mã này rơi vào cột "(Khác)" trong báo cáo.','These fall under the "(Other)" column in reports.'],
   ['Từ','From'],['Đến','To'],['Tổng GT','Total value'],['SL','Qty'],['Tổng','Total'],
   ['Số lượng','Quantity'],['Giá trị','Value'],['(Khác)','(Other)'],
   ['🔍 Gõ mã SKU...','🔍 Type SKU code...'],
@@ -969,6 +979,7 @@ var I18N_PATTERNS=[
   [/^Tất cả ngày \((\d+)\)$/, function(m){return 'All days ('+m[1]+')';}],
   [/^Tất cả ngày$/, function(){return 'All days';}],
   [/^Tháng (\d+)$/, function(m){return 'Month '+m[1];}],
+  [/^⚠ (\d+) mã chưa có nhóm$/, function(m){return '⚠ '+m[1]+' SKUs without group';}],
   [/^Số lượng \(cái\)$/, function(){return 'Quantity (pcs)';}],
   [/^Chi tiết theo mã (.+)$/, function(m){return 'Detail by code '+m[1];}],
   [/^Quét xuất — (.+)$/, function(m){return 'Outbound scan — '+m[1];}],
@@ -1820,6 +1831,7 @@ function paintDashboard(m,d){
     '<div class="hidden sm:block"><label class="text-xs text-slate-500">Nhóm</label><select id="ovGroup" class="field" style="min-width:140px" onchange="applyOverviewFilter(true)"></select></div>'+
   '</div></div>'+
   '<div id="salesKpi" class="mb-4"><div class="grid grid-cols-2 md:grid-cols-4 gap-3"><div class="card p-4 text-center text-slate-400 py-6">Đang tải…</div></div></div>'+
+  (ungroupedList().length? '<div class="card p-4 mb-3" style="border-left:4px solid var(--amber)"><div class="flex items-center justify-between gap-3 flex-wrap"><div><div class="font-semibold" style="color:var(--amber)">⚠ '+ungroupedList().length+' mã chưa có nhóm</div><div class="text-xs text-slate-500">Các mã này rơi vào cột "(Khác)" trong báo cáo.</div></div><button class="btn btn-amber" onclick="openUngrouped()">Bổ sung nhóm</button></div></div>' : '')+
   '<div class="grid md:grid-cols-2 gap-3 mb-3">'+
     '<div class="card p-4"><div class="font-semibold mb-2 text-slate-700">Nhập vs Xuất (30 ngày)</div><canvas id="cD1" height="180"></canvas></div>'+
     '<div class="card p-4"><div class="font-semibold mb-2 text-slate-700">Top 10 SKU bán chạy</div><canvas id="cD2" height="180"></canvas></div></div>'+
@@ -1860,6 +1872,42 @@ function applyOverviewFilter(useInputs){
 }
 function prevEqualRange(from,to){ var days=Math.round((Date.parse(to+'T00:00:00Z')-Date.parse(from+'T00:00:00Z'))/86400000)+1; var pto=addDays(from,-1); var pfrom=addDays(pto,-(days-1)); return {from:pfrom, to:pto}; }
 function kpi(label,val,color,icon){ return '<div class="card p-4"><div class="kpi-top"><span class="kpi-label">'+label+'</span><span class="kpi-dot" style="background:'+color+';color:#fff">'+(icon||'')+'</span></div><div class="num" style="color:'+color+'">'+val+'</div></div>'; }
+
+/* ---- MÀN HÌNH: MÃ CHƯA CÓ NHÓM (cảnh báo + gán nhóm nhanh) ---- */
+function ungroupedList(){ return (cache.skus||[]).filter(function(s){ return !(s.sku_group&&String(s.sku_group).trim()); }); }
+function openUngrouped(){
+  var m=document.getElementById('main'); var list=ungroupedList();
+  var groups=uniqSorted((cache.skus||[]).map(function(s){return s.sku_group;}));
+  var dl='<datalist id="ugGroups">'+groups.map(function(g){return '<option value="'+String(g).replace(/"/g,'&quot;')+'">';}).join('')+'</datalist>';
+  m.innerHTML=
+   '<button class="btn btn-ghost mb-4" onclick="go(\'dashboard\')">← Tổng quan</button>'+
+   '<div class="sectiontitle mb-1">Mã chưa có nhóm <span id="ugCount" class="text-slate-400" style="font-weight:600">('+list.length+')</span></div>'+
+   '<div class="text-sm text-slate-500 mb-3">Gán nhóm cho các SKU bên dưới (gõ tên nhóm có sẵn hoặc nhóm mới). Lưu tự động khi rời ô.</div>'+dl+
+   '<input id="ugSearch" class="field mb-3" placeholder="🔍 Tìm SKU / tên..." oninput="renderUngrouped()">'+
+   '<div class="card overflow-auto"><table><thead><tr><th>Sản phẩm</th><th>Size</th><th class="text-center">m³</th><th style="min-width:180px">Nhóm</th></tr></thead><tbody id="ugBody"></tbody></table></div>';
+  renderUngrouped();
+}
+var _ugRows=[];
+function renderUngrouped(){
+  var q=((document.getElementById('ugSearch')||{}).value||'').toLowerCase();
+  _ugRows=ungroupedList().filter(function(s){return (s.sku_code+' '+(s.product_name||'')).toLowerCase().indexOf(q)>=0;}).slice(0,1500);
+  var c=document.getElementById('ugCount'); if(c) c.textContent='('+ungroupedList().length+')';
+  var b=document.getElementById('ugBody'); if(!b) return;
+  b.innerHTML=_ugRows.map(function(s){
+    return '<tr><td>'+(s.product_name||'')+'<div class="text-xs text-slate-400">'+s.sku_code+'</div></td><td>'+(s.size||'')+'</td><td class="text-center text-slate-500">'+(s.volume_m3||'-')+'</td>'+
+      '<td><input class="field ug-inp" list="ugGroups" data-sku="'+String(s.sku_code).replace(/"/g,'&quot;')+'" placeholder="Nhập nhóm..." onchange="assignGroup(this)"></td></tr>';
+  }).join('')||'<tr><td colspan="4" class="text-center text-slate-400 py-8">Tất cả SKU đã có nhóm ✓</td></tr>';
+}
+async function assignGroup(inp){
+  var sku=inp.getAttribute('data-sku'), g=inp.value.trim(); if(!g) return;
+  inp.disabled=true;
+  try{ await api('setSkuGroup',{sku_code:sku, sku_group:g});
+    var s=(cache.skus||[]).filter(function(x){return x.sku_code===sku;})[0]; if(s) s.sku_group=g;
+    try{ localStorage.setItem(CONFIG.cacheKey,JSON.stringify(cache)); }catch(e){}
+    inp.style.borderColor='var(--green)'; inp.style.color='var(--green)';
+    var c=document.getElementById('ugCount'); if(c) c.textContent='('+ungroupedList().length+')';
+  }catch(e){ inp.disabled=false; inp.style.borderColor='var(--red)'; flashAlert('bad','LỖI', e.message); }
+}
 
 /* ---- BÁO CÁO DOANH SỐ (bảng + biểu đồ cột chồng theo group + line số lượng) ---- */
 async function loadSalesReport(){
