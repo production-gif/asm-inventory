@@ -398,6 +398,8 @@ var PIN_SALT = 'AMERICAN-STAR-WMS';    // phải khớp với hash trong supabas
 var sb = null;
 function anonKey(){ return SUPABASE_ANON_KEY || localStorage.getItem('as_anon') || ''; }
 function ensureClient(){ if(!sb && anonKey() && window.supabase) sb = window.supabase.createClient(SUPABASE_URL, anonKey()); return sb; }
+// Lấy HẾT bản ghi vượt giới hạn 1000 dòng của Supabase (phân trang .range)
+async function pageAll(makeQ){ var out=[], off=0, pg; do{ pg=chk(await makeQ(off,off+999))||[]; out=out.concat(pg); off+=1000; } while(pg.length===1000); return out; }
 
 function pad(n){ return (n<10?'0':'')+n; }
 function localDate(d){ d=d||new Date(); var p=tzParts(d); return p.year+'-'+p.month+'-'+p.day; }
@@ -459,10 +461,12 @@ async function api(action, p){
     }
 
     case 'getBootstrap': {
-      var rs=await Promise.all([ sb.from('master_sku').select('*'), sb.from('inventory').select('*'), sb.from('vehicles').select('*'), sb.from('settings').select('*') ]);
-      return { skus:chk(rs[0])||[], inventory:chk(rs[1])||[], vehicles:chk(rs[2])||[], settings:chk(rs[3])||[], server_date:serverToday() };
+      var rs=await Promise.all([ sb.from('vehicles').select('*'), sb.from('settings').select('*') ]);
+      var skusB=await pageAll(function(a,b){return sb.from('master_sku').select('*').range(a,b);});
+      var invB=await pageAll(function(a,b){return sb.from('inventory').select('*').range(a,b);});
+      return { skus:skusB, inventory:invB, vehicles:chk(rs[0])||[], settings:chk(rs[1])||[], server_date:serverToday() };
     }
-    case 'getInventory': return { items: chk(await sb.from('inventory').select('*'))||[] };
+    case 'getInventory': return { items: await pageAll(function(a,b){return sb.from('inventory').select('*').range(a,b);}) };
     case 'adjustStock': {
       var skuA=String(p.sku_code).trim(); var delta=parseInt(p.delta,10)||0;
       var rowA=(chk(await sb.from('inventory').select('*').eq('sku_code',skuA))||[])[0];
@@ -517,9 +521,9 @@ async function api(action, p){
     }
 
     case 'getOpenSOs': {
-      var headers=chk(await sb.from('sales_orders').select('*').in('status',STATUS_NEED))||[];
+      var headers=await pageAll(function(a,b){return sb.from('sales_orders').select('*').in('status',STATUS_NEED).range(a,b);});
       var sos=headers.map(function(h){return h.so_number;});
-      var lines=sos.length?chk(await sb.from('so_lines').select('*').in('so_number',sos))||[]:[];
+      var lines=[]; for(var oi=0;oi<sos.length;oi+=200){ var chk2=sos.slice(oi,oi+200); lines=lines.concat(await pageAll(function(a,b){return sb.from('so_lines').select('*').in('so_number',chk2).range(a,b);})); }
       var bySo={}; lines.forEach(function(l){(bySo[l.so_number]=bySo[l.so_number]||[]).push(l);});
       return { items: headers.map(function(h){ var ls=bySo[h.so_number]||[]; var ord=ls.reduce(function(s,l){return s+(+l.qty_ordered||0);},0); var shp=ls.reduce(function(s,l){return s+(+l.qty_shipped||0);},0); return {so_number:h.so_number,customer:h.customer,delivery_date:h.delivery_date,status:h.status,lines:ls.length,qty_ordered:ord,qty_shipped:shp,remaining:ord-shp,amount:(+h.total_amount||0)}; }) };
     }
@@ -631,12 +635,12 @@ async function api(action, p){
       var toD=p.to||localDate(new Date()); var fromD=p.from||addDays(toD,-29);
       function r2(x){ return Math.round((x||0)*100)/100; }
       var SHIP_ST={'Fulfilled':1,'Issued':1,'In Progress':1};
-      var gmapS={}; (chk(await sb.from('master_sku').select('sku_code,sku_group'))||[]).forEach(function(s){ gmapS[s.sku_code]=(s.sku_group||'').trim(); });
+      var gmapS={}; (await pageAll(function(a,b){return sb.from('master_sku').select('sku_code,sku_group').range(a,b);})).forEach(function(s){ gmapS[s.sku_code]=(s.sku_group||'').trim(); });
       var byDate={}, groupsSet={}, ungAgg={};
       function bd(d){ if(!byDate[d]) byDate[d]={ship:0,recv:0,qship:0,qrecv:0,gs:{},gr:{},qsg:{}}; return byDate[d]; }
       function markUng(sku,pname,sv,ov,sq,oq){ if(!ungAgg[sku]) ungAgg[sku]={sku_code:sku, product_name:pname||sku, in_master:gmapS.hasOwnProperty(sku), val_ship:0, val_recv:0, qty_ship:0, qty_recv:0}; var u=ungAgg[sku]; u.val_ship+=sv; u.val_recv+=ov; u.qty_ship+=sq; u.qty_recv+=oq; }
 
-      var heads=chk(await sb.from('sales_orders').select('so_number,delivery_date,status').gte('delivery_date',fromD).lte('delivery_date',toD))||[];
+      var heads=await pageAll(function(a,b){return sb.from('sales_orders').select('so_number,delivery_date,status').gte('delivery_date',fromD).lte('delivery_date',toD).range(a,b);});
       var hmapS={}, statMap={}, soNumsS=[]; heads.forEach(function(h){ if(h.delivery_date){ hmapS[h.so_number]=String(h.delivery_date).slice(0,10); statMap[h.so_number]=h.status||''; soNumsS.push(h.so_number); } });
       for(var ci=0;ci<soNumsS.length;ci+=200){ var chunk=soNumsS.slice(ci,ci+200), off=0, page;
         do{ page=chk(await sb.from('so_lines').select('so_number,sku_code,product_name,qty_ordered,ordered_price').in('so_number',chunk).range(off,off+999))||[];
@@ -694,12 +698,14 @@ async function api(action, p){
 
     case 'importSO': {
       var rw=parseCSV(p.csvText); if(!rw.length) throw new Error('CSV rỗng');
-      // File ERP có vài dòng tiêu đề ở trên -> tự tìm dòng header chứa 'SO #'
-      var hdi=-1; for(var hh=0;hh<rw.length;hh++){ if((rw[hh]||[]).indexOf('SO #')>=0){ hdi=hh; break; } }
+      // File ERP có vài dòng tiêu đề ở trên -> tự tìm dòng header chứa 'SO #' (không phân biệt hoa/thường, bỏ khoảng trắng thừa)
+      function nz(x){ return String(x==null?'':x).replace(/\s+/g,' ').trim().toLowerCase(); }
+      var hdi=-1; for(var hh=0;hh<rw.length;hh++){ var row=rw[hh]||[]; for(var cc=0;cc<row.length;cc++){ if(nz(row[cc])==='so #'){ hdi=hh; break; } } if(hdi>=0) break; }
       if(hdi<0) throw new Error('Không tìm thấy dòng tiêu đề có cột "SO #"');
       var hd=rw[hdi];
+      var hnorm={}; hd.forEach(function(h,i){ var k=nz(h); if(k && hnorm[k]==null) hnorm[k]=i; });
       var MAP={so_number:'SO #',customer:'Customer',customer_po:'Customer PO',sales_person:'Sales Person',state:'State / Province',so_class:'Class',location_group:'Location Group',status:'Order Status',so_date:'Order Date Issued',delivery_date:'Order Date Scheduled',fulfilled_date:'Order Date Fulfilled',sku_code:'Product Number',product_name:'Description',qty_ordered:'Ordered Qty',uom:'UOM',ordered_price:'Ordered Price',qty_shipped:'Shipped Qty',shipped_price:'Shipped Price',remaining_qty:'Remaining Qty',remaining_price:'Remaining Price',item_status:'Item Status',item_type:'Item Type',item_date_scheduled:'Item Date Scheduled',item_date_fulfilled:'Item Date Fulfilled'};
-      var ix2={}; Object.keys(MAP).forEach(function(f){ix2[f]=hd.indexOf(MAP[f]);});
+      var ix2={}; Object.keys(MAP).forEach(function(f){ var k=nz(MAP[f]); ix2[f]=(hnorm[k]!=null?hnorm[k]:-1); });
       var soH={}, soL=[], skuSeen={}, soAmt={};
       for(var j=hdi+1;j<rw.length;j++){ var rr=rw[j]; if(!rr||!rr.length)continue; var so=val(rr,ix2.so_number),sku3=val(rr,ix2.sku_code); if(!so||!sku3)continue; var st=val(rr,ix2.status); /* ghi nhận MỌI trạng thái, kể cả Estimate (giữ nguyên status) */
         // raw = TOÀN BỘ cột A->Z của dòng này (header -> giá trị)
@@ -750,7 +756,7 @@ async function api(action, p){
       return {so_number:so, lines:soL2.length, new_sku:newSkC.length};
     }
     case 'getOrders': {
-      var rows=chk(await sb.from('sales_orders').select('so_number,customer,status,state,sales_person,so_class,location_group,so_date,delivery_date,total_amount').order('so_number',{ascending:false}))||[];
+      var rows=await pageAll(function(a,b){return sb.from('sales_orders').select('so_number,customer,status,state,sales_person,so_class,location_group,so_date,delivery_date,total_amount').order('so_number',{ascending:false}).range(a,b);});
       return {items:rows};
     }
     case 'getOrderLines': {
