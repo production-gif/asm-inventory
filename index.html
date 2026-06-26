@@ -1839,20 +1839,26 @@ function paintDashboard(m,d){
   '</div></div>'+
   '<div id="salesKpi" class="mb-4"><div class="grid grid-cols-2 md:grid-cols-4 gap-3"><div class="card p-4 text-center text-slate-400 py-6">Đang tải…</div></div></div>'+
   '<div id="ugBanner"></div>'+
+  // 3) Biểu đồ doanh số + bộ lọc Ngày/Tháng/Năm góc phải · 4) Bảng chi tiết
+  '<div class="card p-4 mb-3"><div class="flex flex-wrap items-center justify-between gap-2 mb-3">'+
+    '<div class="font-semibold text-slate-700">Doanh số theo ngày & nhóm</div>'+
+    '<div class="flex gap-1"><button class="granbtn btn btn-ghost" data-g="day" onclick="setGran(\'day\')" style="min-height:34px;padding:0 12px;font-size:13px;border-radius:8px">Ngày</button>'+
+      '<button class="granbtn btn btn-ghost" data-g="month" onclick="setGran(\'month\')" style="min-height:34px;padding:0 12px;font-size:13px;border-radius:8px">Tháng</button>'+
+      '<button class="granbtn btn btn-ghost" data-g="year" onclick="setGran(\'year\')" style="min-height:34px;padding:0 12px;font-size:13px;border-radius:8px">Năm</button></div></div>'+
+    '<div style="position:relative;height:300px"><canvas id="cSales"></canvas></div>'+
+    '<div class="overflow-auto mt-3" id="srBody"><div class="text-center text-slate-400 py-6">Đang tải…</div></div></div>'+
+  // 5) Các cụm phụ đưa xuống dưới cùng
   '<div class="grid md:grid-cols-2 gap-3 mb-3">'+
     '<div class="card p-4"><div class="font-semibold mb-2 text-slate-700">Nhập vs Xuất (30 ngày)</div><canvas id="cD1" height="180"></canvas></div>'+
     '<div class="card p-4"><div class="font-semibold mb-2 text-slate-700">Top 10 SKU bán chạy</div><canvas id="cD2" height="180"></canvas></div></div>'+
   '<div class="grid md:grid-cols-2 gap-3">'+
     '<div class="card p-4"><div class="font-semibold mb-2" style="color:var(--red)">⚠ SKU sắp hết ('+d.low_stock.length+')</div><div class="text-sm space-y-1">'+(d.low_stock.slice(0,15).map(function(x){return '<div>'+x.sku_code+': <b>'+x.qty+'</b></div>';}).join('')||'<span class="text-slate-400">Không có</span>')+'</div></div>'+
-    '<div class="card p-4"><div class="font-semibold mb-2" style="color:var(--amber)">⏰ SO quá hạn ('+d.overdue.length+')</div><div class="text-sm space-y-1">'+(d.overdue.slice(0,15).map(function(x){return '<div>'+x.so_number+' — '+x.customer+' <span class="text-slate-400">('+x.delivery_date+')</span></div>';}).join('')||'<span class="text-slate-400">Không có</span>')+'</div></div></div>'+
-  '<div class="card p-4 mt-3"><div class="font-semibold text-slate-700 mb-3">Doanh số theo ngày & nhóm</div>'+
-    '<div style="position:relative;height:300px"><canvas id="cSales"></canvas></div>'+
-    '<div class="overflow-auto mt-3" id="srBody"><div class="text-center text-slate-400 py-6">Đang tải…</div></div></div>';
+    '<div class="card p-4"><div class="font-semibold mb-2" style="color:var(--amber)">⏰ SO quá hạn ('+d.overdue.length+')</div><div class="text-sm space-y-1">'+(d.overdue.slice(0,15).map(function(x){return '<div>'+x.so_number+' — '+x.customer+' <span class="text-slate-400">('+x.delivery_date+')</span></div>';}).join('')||'<span class="text-slate-400">Không có</span>')+'</div></div></div>';
   lineChart('cD1',d.days.map(function(x){return x.slice(5);}),d.line_in,d.line_out); barChart('cD2',d.top_sku.map(function(x){return x.sku_code;}),d.top_sku.map(function(x){return x.qty;}),'var(--red)');
   buildOvFilters(); applyOverviewFilter(false);
 }
 /* ---- Bộ lọc thanh header Overview: năm / tháng / khoảng ngày / nhóm ---- */
-var _ov={from:'',to:'',group:''};
+var _ov={from:'',to:'',group:'',gran:'day'};
 function buildOvFilters(){
   var t=serverToday(), cy=+t.slice(0,4), cm=+t.slice(5,7);
   var ys=document.getElementById('ovYear'); if(ys){ var yo=''; for(var y=cy+1;y>=cy-4;y--){ yo+='<option value="'+y+'">'+y+'</option>'; } ys.innerHTML=yo; ys.value=String(cy); }
@@ -1928,14 +1934,35 @@ async function loadSalesReport(){
     var rep=await api('reportSales',{from:_ov.from,to:_ov.to}); window._salesRep=rep;
     var ug=rep.ungrouped||[]; var bn=document.getElementById('ugBanner');
     if(bn) bn.innerHTML = ug.length ? '<div class="card p-4 mb-3" style="border-left:4px solid var(--amber)"><div class="flex items-center justify-between gap-3 flex-wrap"><div><div class="font-semibold" style="color:var(--amber)">⚠ '+ug.length+' mã chưa có nhóm</div><div class="text-xs text-slate-500">Các mã này rơi vào cột "(Khác)" trong báo cáo.</div></div><button class="btn btn-amber" onclick="openUngrouped()">Bổ sung nhóm</button></div></div>' : '';
-    var groups = _ov.group ? rep.groups.filter(function(g){return g===_ov.group;}) : rep.groups;
-    if(document.getElementById('srBody')) document.getElementById('srBody').innerHTML=renderSalesTable(rep, groups);
-    var labels=rep.rows.map(function(x){return x.date.slice(5);});
-    var series={}; groups.forEach(function(g){ series[g]=rep.rows.map(function(r){return (r.ship&&r.ship[g])||0;}); });
-    var qty = _ov.group ? rep.rows.map(function(r){return (r.qs&&r.qs[_ov.group])||0;}) : rep.rows.map(function(r){return r.qty_ship;});
-    salesChart('cSales',labels,groups,series,qty);
+    renderSalesView();
   }catch(e){ if(document.getElementById('srBody')) document.getElementById('srBody').innerHTML='<div class="card p-3">'+e.message+'</div>'; }
 }
+// Gộp dữ liệu ngày -> theo Ngày / Tháng / Năm
+function bucketRows(rows, gran){
+  if(gran==='day') return rows;
+  var map={}, keys=[];
+  rows.forEach(function(r){ var k = gran==='year' ? r.date.slice(0,4) : r.date.slice(0,7);
+    if(!map[k]){ map[k]={date:k, ship:{}, recv:{}, qs:{}, qty_ship:0, qty_recv:0, ship_total:0, recv_total:0}; keys.push(k); }
+    var o=map[k]; o.qty_ship+=r.qty_ship||0; o.qty_recv+=r.qty_recv||0; o.ship_total+=r.ship_total||0; o.recv_total+=r.recv_total||0;
+    Object.keys(r.ship||{}).forEach(function(g){ o.ship[g]=(o.ship[g]||0)+(r.ship[g]||0); });
+    Object.keys(r.recv||{}).forEach(function(g){ o.recv[g]=(o.recv[g]||0)+(r.recv[g]||0); });
+    Object.keys(r.qs||{}).forEach(function(g){ o.qs[g]=(o.qs[g]||0)+(r.qs[g]||0); });
+  });
+  return keys.sort().map(function(k){return map[k];});
+}
+function renderSalesView(){
+  var rep=window._salesRep; if(!rep) return; var gran=_ov.gran||'day';
+  var rows=bucketRows(rep.rows||[], gran);
+  var groups = _ov.group ? (rep.groups||[]).filter(function(g){return g===_ov.group;}) : (rep.groups||[]);
+  var sb=document.getElementById('srBody'); if(sb) sb.innerHTML=renderSalesTable({groups:rep.groups, rows:rows}, groups);
+  var labels=rows.map(function(r){ return gran==='day' ? r.date.slice(5) : r.date; });
+  var series={}; groups.forEach(function(g){ series[g]=rows.map(function(r){return (r.ship&&r.ship[g])||0;}); });
+  var qty = _ov.group ? rows.map(function(r){return (r.qs&&r.qs[_ov.group])||0;}) : rows.map(function(r){return r.qty_ship;});
+  salesChart('cSales',labels,groups,series,qty);
+  updateGranBtns();
+}
+function setGran(g){ _ov.gran=g; renderSalesView(); }
+function updateGranBtns(){ var g=_ov.gran||'day'; [].forEach.call(document.querySelectorAll('.granbtn'),function(b){ var on=b.getAttribute('data-g')===g; b.classList.toggle('btn-navy',on); b.classList.toggle('btn-ghost',!on); }); }
 function renderSalesTable(rep, groups){
   groups=groups||rep.groups; if(!groups.length) return '<div class="text-center text-slate-400 py-6">'+L('Không có dữ liệu')+'</div>';
   // Màu phân biệt 2 khối: ĐÃ XUẤT (xanh lá) · ĐÃ NHẬN (xanh dương)
