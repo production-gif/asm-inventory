@@ -287,7 +287,11 @@
           <div id="pageSub" class="text-xs text-slate-400 leading-tight"></div>
         </div>
       </div>
-      <div class="flex items-center gap-3">
+      <div class="flex items-center gap-2">
+        <div class="flex gap-1">
+          <button class="langbtn btn btn-ghost" data-l="en" onclick="setLang('en')" style="min-height:32px;padding:0 9px;font-size:12px;border-radius:8px">EN</button>
+          <button class="langbtn btn btn-ghost" data-l="vi" onclick="setLang('vi')" style="min-height:32px;padding:0 9px;font-size:12px;border-radius:8px">VI</button>
+        </div>
         <span id="netDot" title="trạng thái mạng" class="text-lg">●</span>
         <div id="headLogo" class="hidden sm:block"></div>
       </div>
@@ -586,6 +590,40 @@ async function api(action, p){
       return {done:true,loading_id:lid2,total_volume_m3:detail2.scanned_volume_m3};
     }
 
+    case 'reopenLoading': {
+      // Mở khóa loading đã hoàn tất về trạng thái "open": hoàn lại qty_shipped đã cộng + đặt lại trạng thái SO.
+      // (Tồn kho đã trừ ở từng lần quét xuất nên KHÔNG đụng vào — các lượt quét vẫn giữ.)
+      var lidR=String(p.loading_id);
+      var ldR=(chk(await sb.from('loadings').select('*').eq('loading_id',lidR))||[])[0]; if(!ldR) throw new Error('Không tìm thấy loading');
+      if(ldR.status!=='done') return {reopened:true,loading_id:lidR};
+      var soNumsR=String(ldR.so_list).split(',').filter(Boolean);
+      var scR=chk(await sb.from('outbound_scans').select('*').eq('loading_id',lidR).eq('validation_status','OK'))||[];
+      var gotR={}; scR.forEach(function(s){ var k=s.so_number+'||'+s.sku_code; gotR[k]=(gotR[k]||0)+(+s.qty||1); });
+      var lnsR=soNumsR.length?chk(await sb.from('so_lines').select('*').in('so_number',soNumsR))||[]:[];
+      for(var lr=0;lr<lnsR.length;lr++){ var lR=lnsR[lr]; var sub=gotR[lR.so_number+'||'+lR.sku_code]||0; if(sub>0) chk(await sb.from('so_lines').update({qty_shipped:Math.max(0,(+lR.qty_shipped||0)-sub)}).eq('id',lR.id)); }
+      var lnsR2=soNumsR.length?chk(await sb.from('so_lines').select('*').in('so_number',soNumsR))||[]:[];
+      for(var sr=0;sr<soNumsR.length;sr++){ var soR=soNumsR[sr]; var lsR=lnsR2.filter(function(x){return String(x.so_number)===String(soR);}); var ordR=lsR.reduce(function(s,l){return s+(+l.qty_ordered||0);},0); var shpR=lsR.reduce(function(s,l){return s+(+l.qty_shipped||0);},0); chk(await sb.from('sales_orders').update({status: shpR<=0?'Issued':(shpR>=ordR?'Fulfilled':'In Progress')}).eq('so_number',soR)); }
+      chk(await sb.from('loadings').update({status:'open',completed_at:null}).eq('loading_id',lidR));
+      await audit(session.username,'reopen_loading',lidR);
+      return {reopened:true,loading_id:lidR};
+    }
+
+    case 'reportSales': {
+      // Doanh số theo NGÀY GIAO (delivery_date) × NHÓM (sku_group), giá trị theo phần ĐÃ XUẤT (shipped).
+      var toD=p.to||localDate(new Date()); var fromD=p.from||addDays(toD,-29);
+      var heads=chk(await sb.from('sales_orders').select('so_number,delivery_date').gte('delivery_date',fromD).lte('delivery_date',toD))||[];
+      var hmapS={}, soNumsS=[]; heads.forEach(function(h){ if(h.delivery_date){ hmapS[h.so_number]=String(h.delivery_date).slice(0,10); soNumsS.push(h.so_number); } });
+      var linesS=[]; for(var ci=0;ci<soNumsS.length;ci+=200){ linesS=linesS.concat(chk(await sb.from('so_lines').select('so_number,sku_code,qty_shipped,shipped_price').in('so_number',soNumsS.slice(ci,ci+200)))||[]); }
+      var gmapS={}; (chk(await sb.from('master_sku').select('sku_code,sku_group'))||[]).forEach(function(s){ gmapS[s.sku_code]=(s.sku_group||'').trim(); });
+      var byDate={}, groupsSet={};
+      linesS.forEach(function(l){ var d=hmapS[l.so_number]; if(!d) return; var g=gmapS[l.sku_code]||'(Khác)'; var v=+l.shipped_price||0, q=+l.qty_shipped||0; if(v===0&&q===0) return; groupsSet[g]=1;
+        if(!byDate[d]) byDate[d]={val:0,qty:0,g:{}}; byDate[d].val+=v; byDate[d].qty+=q; byDate[d].g[g]=(byDate[d].g[g]||0)+v; });
+      var groups=Object.keys(groupsSet).sort();
+      var dayList=[]; for(var dd=fromD; dd<=toD; dd=addDays(dd,1)){ dayList.push(dd); if(dayList.length>370) break; }
+      var rows=dayList.map(function(d){ var o=byDate[d]; var row={date:d, total:o?Math.round(o.val*100)/100:0, qty:o?o.qty:0, groups:{}}; groups.forEach(function(g){ row.groups[g]=(o&&o.g[g])?Math.round(o.g[g]*100)/100:0; }); return row; });
+      return {from:fromD, to:toD, groups:groups, rows:rows};
+    }
+
     case 'importSKU': {
       var rows=parseCSV(p.csvText); if(!rows.length) throw new Error('CSV rỗng');
       // Khớp tên cột KHÔNG phân biệt hoa/thường + nhiều cách đặt tên (group / Group / sku_group ...)
@@ -830,6 +868,12 @@ var I18N_PAIRS = [
   ['Nhập hôm nay','In today'],['Xuất hôm nay','Out today'],['SO đang xử lý','Open SOs'],
   ['Nhập vs Xuất (30 ngày)','In vs Out (30 days)'],['Top 10 SKU bán chạy','Top 10 best-selling SKUs'],
   ['Nhập','In'],['Xuất','Out'],
+  ['Doanh số theo ngày & nhóm (đã xuất)','Sales by day & group (shipped)'],
+  ['Từ','From'],['Đến','To'],['Tổng GT','Total value'],['SL','Qty'],['Tổng','Total'],
+  ['Số lượng','Quantity'],['Giá trị','Value'],['(Khác)','(Other)'],
+  ['🔍 Gõ mã SKU...','🔍 Type SKU code...'],
+  ['🔓 Mở lại để sửa số lượng','🔓 Reopen to edit quantities'],['✓ ĐÃ MỞ LẠI','✓ REOPENED'],
+  ['Mở lại loading đã hoàn tất để sửa? Đơn hàng sẽ trở lại trạng thái đang xử lý.','Reopen this completed loading to edit? Orders will return to In Progress.'],
   /* Báo cáo ngày */
   ['Tổng đóng gói','Total packed'],['Tổng xuất','Total shipped'],['Theo công nhân','By worker'],
   ['Người đóng gói','Packer'],['Đối chiếu SO vs Thực xuất','SO vs Actual shipped'],
@@ -1346,12 +1390,17 @@ function renderLoading(d){
     '<div style="background:var(--track);border-radius:999px;height:16px;margin-top:8px;overflow:hidden"><div style="height:100%;width:'+Math.min(pct,100)+'%;background:'+bc+';transition:.3s"></div></div>'+
     '<div class="text-right text-sm font-bold mt-1" style="color:'+bc+'">'+pct+'%'+(pct>100?' — QUÁ TẢI!':'')+'</div></div>'+
   (ld.status!=='done'?'<div class="flex gap-2 mb-3"><button class="btn btn-ghost flex-1" onclick="editLoading()">✏ Sửa SO/Xe</button><button class="btn btn-red flex-1" onclick="deleteLoadingNow()">🗑 Xóa</button></div>':'')+
-  (ld.status==='done'?'<div class="card p-3 mb-3 text-center font-semibold" style="background:#dcfce7;color:#166534">✓ Loading đã hoàn tất</div>':
+  (ld.status==='done'?'<div class="card p-3 mb-3" style="background:#dcfce7"><div class="text-center font-semibold mb-2" style="color:#166534">✓ Loading đã hoàn tất</div><button class="btn btn-amber w-full" onclick="reopenLoading()">🔓 Mở lại để sửa số lượng</button></div>':
    '<button class="btn btn-navy btn-lg mb-3" onclick="startOutboundScan()">📷 QUÉT XUẤT HÀNG</button>')+
   '<div class="card overflow-auto mb-3"><table><thead><tr><th>Sản phẩm</th><th class="text-center">Quét/Cần</th><th class="text-center">m³/cái</th><th class="text-center">m³ line</th><th class="text-center">Đủ</th></tr></thead><tbody>'+rows+
     '<tr class="soft"><td class="font-bold">Tổng thể tích (theo đơn)</td><td></td><td></td><td class="text-center font-bold" style="color:var(--navy)">'+totLineVol.toFixed(3)+'</td><td></td></tr>'+
     '</tbody></table></div>'+
   (ld.status!=='done'?'<button class="btn '+(allDone?'btn-green':'btn-ghost')+' w-full" onclick="completeLoading()">'+(allDone?'✓ HOÀN TẤT LOADING':'Hoàn tất (chưa đủ số lượng)')+'</button>':'');
+}
+async function reopenLoading(){ var ld=window._curLoading; if(!ld)return;
+  if(!confirm(L('Mở lại loading đã hoàn tất để sửa? Đơn hàng sẽ trở lại trạng thái đang xử lý.')))return;
+  try{ await api('reopenLoading',{loading_id:ld.loading_id}); _ldMemo=null; _sosMemo=null; flashAlert('good','✓ ĐÃ MỞ LẠI', ld.loading_id, true); openLoading(ld.loading_id); }
+  catch(e){ flashAlert('bad','LỖI', e.message); }
 }
 // Gõ tay số lượng đã quét cho 1 SKU (cộng/bớt cho khớp số nhập)
 async function setQtyManual(sku,v){
@@ -1417,14 +1466,14 @@ function viewInventory(m){
   m.innerHTML=
   '<div class="grid grid-cols-3 gap-3 mb-4" id="invKpi">'+kpi('Loại SKU',window._inv.length,'var(--navy)','🏷️')+kpi('Tổng tồn',totalStock,'var(--amber)','📦')+kpi('Sắp hết', window._inv.filter(function(r){return r.in_stock<(parseInt(cache.settings.reorder_threshold||"10",10));}).length,'var(--red)','⚠️')+'</div>'+
   '<div class="card p-3 mb-3"><div class="flex flex-wrap gap-2 items-end">'+
-    '<div style="flex:2;min-width:170px"><label class="text-xs text-slate-500">Cộng tồn thủ công cho SKU</label><select id="adjSku" class="field"></select></div>'+
+    '<div style="flex:2;min-width:170px"><label class="text-xs text-slate-500">Cộng tồn thủ công cho SKU</label><input id="adjSku" class="field" list="adjSkuList" placeholder="🔍 Gõ mã SKU..."><datalist id="adjSkuList"></datalist></div>'+
     '<div style="flex:1;min-width:90px"><label class="text-xs text-slate-500">Số lượng (+/-)</label><input id="adjQty" type="number" class="field" value="1"></div>'+
     '<button class="btn btn-green" onclick="addStockManual()">➕ Cộng tồn</button></div>'+
     '<div class="text-xs text-slate-400 mt-2">Hoặc bấm thẳng vào ô “Tồn” trong bảng để sửa số tồn.</div></div>'+
   '<div class="flex flex-wrap gap-2 mb-3"><input id="invSearch" class="field" style="flex:1;min-width:180px" placeholder="🔍 Tìm SKU / sản phẩm..." oninput="renderInv()">'+
     '<button class="btn btn-ghost" onclick="exportCSV(window._inv,\'tonkho.csv\')">⬇ CSV</button></div>'+
   '<div class="card overflow-auto"><table><thead><tr><th onclick="sortInv(\'name\')">Sản phẩm</th><th>Size</th><th class="text-center" onclick="sortInv(\'in_stock\')">Tồn (sửa được)</th><th class="text-center" onclick="sortInv(\'shipped\')">Đã xuất</th><th class="text-center" onclick="sortInv(\'created\')">Đã tạo</th><th class="text-center">m³</th></tr></thead><tbody id="invBody"></tbody></table></div>';
-  var asel=document.getElementById('adjSku'); if(asel) asel.innerHTML=cache.skus.slice(0,2000).map(function(s){return '<option value="'+String(s.sku_code).replace(/"/g,'')+'">'+s.sku_code+'</option>';}).join('');
+  var asel=document.getElementById('adjSkuList'); if(asel) asel.innerHTML=(cache.skus||[]).slice(0,4000).map(function(s){return '<option value="'+String(s.sku_code).replace(/"/g,'&quot;')+'">'+String(s.product_name||'').replace(/"/g,'&quot;')+'</option>';}).join('');
   renderInv();
   // 2) Làm mới nền: lấy tồn mới nhất rồi chỉ cập nhật bảng (không reset ô tìm kiếm)
   api('getInventory').then(function(r){ cache.inventory=r.items; try{localStorage.setItem(CONFIG.cacheKey,JSON.stringify(cache));}catch(e){} if(currentView==='inventory'){ buildInvData(); renderInv(); } }).catch(function(){});
@@ -1758,10 +1807,52 @@ function paintDashboard(m,d){
     '<div class="card p-4"><div class="font-semibold mb-2 text-slate-700">Top 10 SKU bán chạy</div><canvas id="cD2" height="180"></canvas></div></div>'+
   '<div class="grid md:grid-cols-2 gap-3">'+
     '<div class="card p-4"><div class="font-semibold mb-2" style="color:var(--red)">⚠ SKU sắp hết ('+d.low_stock.length+')</div><div class="text-sm space-y-1">'+(d.low_stock.slice(0,15).map(function(x){return '<div>'+x.sku_code+': <b>'+x.qty+'</b></div>';}).join('')||'<span class="text-slate-400">Không có</span>')+'</div></div>'+
-    '<div class="card p-4"><div class="font-semibold mb-2" style="color:var(--amber)">⏰ SO quá hạn ('+d.overdue.length+')</div><div class="text-sm space-y-1">'+(d.overdue.slice(0,15).map(function(x){return '<div>'+x.so_number+' — '+x.customer+' <span class="text-slate-400">('+x.delivery_date+')</span></div>';}).join('')||'<span class="text-slate-400">Không có</span>')+'</div></div></div>';
+    '<div class="card p-4"><div class="font-semibold mb-2" style="color:var(--amber)">⏰ SO quá hạn ('+d.overdue.length+')</div><div class="text-sm space-y-1">'+(d.overdue.slice(0,15).map(function(x){return '<div>'+x.so_number+' — '+x.customer+' <span class="text-slate-400">('+x.delivery_date+')</span></div>';}).join('')||'<span class="text-slate-400">Không có</span>')+'</div></div></div>'+
+  '<div class="card p-4 mt-3"><div class="flex flex-wrap items-end justify-between gap-2 mb-3"><div class="font-semibold text-slate-700">Doanh số theo ngày & nhóm (đã xuất)</div>'+
+    '<div class="flex gap-2 items-end"><div><label class="text-xs text-slate-500">Từ</label><input type="date" id="srFrom" class="field" style="min-width:140px" onchange="loadSalesReport()"></div>'+
+    '<div><label class="text-xs text-slate-500">Đến</label><input type="date" id="srTo" class="field" style="min-width:140px" onchange="loadSalesReport()"></div></div></div>'+
+    '<div style="position:relative;height:300px"><canvas id="cSales"></canvas></div>'+
+    '<div class="overflow-auto mt-3" id="srBody"><div class="text-center text-slate-400 py-6">Đang tải…</div></div></div>';
   lineChart('cD1',d.days.map(function(x){return x.slice(5);}),d.line_in,d.line_out); barChart('cD2',d.top_sku.map(function(x){return x.sku_code;}),d.top_sku.map(function(x){return x.qty;}),'var(--red)');
+  loadSalesReport();
 }
 function kpi(label,val,color,icon){ return '<div class="card p-4"><div class="kpi-top"><span class="kpi-label">'+label+'</span><span class="kpi-dot" style="background:'+color+';color:#fff">'+(icon||'')+'</span></div><div class="num" style="color:'+color+'">'+val+'</div></div>'; }
+
+/* ---- BÁO CÁO DOANH SỐ (bảng + biểu đồ cột chồng theo group + line số lượng) ---- */
+async function loadSalesReport(){
+  var fi=document.getElementById('srFrom'), ti=document.getElementById('srTo');
+  if(!fi||!ti) return;
+  if(!fi.value||!ti.value){ var to=serverToday(); ti.value=ti.value||to; fi.value=fi.value||addDays(to,-29); }
+  var from=fi.value, to=ti.value;
+  var box=document.getElementById('srBody'); if(box) box.innerHTML='<div class="text-center text-slate-400 py-6">Đang tải…</div>';
+  try{
+    var rep=await api('reportSales',{from:from,to:to}); window._salesRep=rep;
+    if(document.getElementById('srBody')) document.getElementById('srBody').innerHTML=renderSalesTable(rep);
+    var labels=rep.rows.map(function(x){return x.date.slice(5);});
+    var series={}; rep.groups.forEach(function(g){ series[g]=rep.rows.map(function(r){return r.groups[g]||0;}); });
+    var qty=rep.rows.map(function(r){return r.qty;});
+    salesChart('cSales',labels,rep.groups,series,qty);
+  }catch(e){ if(document.getElementById('srBody')) document.getElementById('srBody').innerHTML='<div class="card p-3">'+e.message+'</div>'; }
+}
+function renderSalesTable(rep){
+  var groups=rep.groups, totG={}; groups.forEach(function(g){totG[g]=0;}); var totAll=0,totQ=0;
+  var thead='<th>'+L('Ngày')+'</th>'+groups.map(function(g){return '<th class="text-right">'+g+'</th>';}).join('')+'<th class="text-right">'+L('Tổng GT')+'</th><th class="text-right">'+L('SL')+'</th>';
+  var body=rep.rows.map(function(r){ groups.forEach(function(g){totG[g]+=r.groups[g]||0;}); totAll+=r.total; totQ+=r.qty;
+    return '<tr><td>'+r.date+'</td>'+groups.map(function(g){return '<td class="text-right">'+(r.groups[g]?fmtMoney(r.groups[g]):'-')+'</td>';}).join('')+'<td class="text-right font-bold" style="color:var(--green)">'+fmtMoney(r.total)+'</td><td class="text-right">'+(r.qty||'-')+'</td></tr>';
+  }).join('');
+  var foot='<tr class="soft"><td class="font-bold">'+L('Tổng')+'</td>'+groups.map(function(g){return '<td class="text-right font-bold">'+fmtMoney(totG[g])+'</td>';}).join('')+'<td class="text-right font-bold" style="color:var(--green)">'+fmtMoney(totAll)+'</td><td class="text-right font-bold">'+totQ+'</td></tr>';
+  if(!groups.length) return '<div class="text-center text-slate-400 py-6">'+L('Không có dữ liệu')+'</div>';
+  return '<table style="white-space:nowrap"><thead><tr>'+thead+'</tr></thead><tbody>'+body+foot+'</tbody></table>';
+}
+function salesChart(id,labels,groups,series,qty){
+  if(_chart[id])_chart[id].destroy();
+  var palette=['#6366F1','#22C55E','#F59E0B','#EF4444','#06B6D4','#A855F7','#EC4899','#84CC16','#F97316','#14B8A6','#3B82F6','#9333EA','#E11D48','#0EA5E9'];
+  var ds=groups.map(function(g,i){ return {type:'bar', label:g, data:series[g], backgroundColor:palette[i%palette.length], stack:'val', borderWidth:0}; });
+  ds.push({type:'line', label:L('Số lượng'), data:qty, yAxisID:'y1', borderColor:cssVar('--ink')||'#111827', backgroundColor:'transparent', tension:.3, pointRadius:2, borderWidth:2});
+  _chart[id]=new Chart(document.getElementById(id),{ data:{labels:labels,datasets:ds}, options:{ responsive:true, maintainAspectRatio:false, interaction:{mode:'index',intersect:false},
+    plugins:{legend:{position:'bottom',labels:{font:{size:10},boxWidth:12}}},
+    scales:{ x:{stacked:true, ticks:{font:{size:9},maxRotation:60}}, y:{stacked:true, beginAtZero:true, title:{display:true,text:L('Giá trị')}}, y1:{position:'right', beginAtZero:true, grid:{drawOnChartArea:false}, title:{display:true,text:L('Số lượng')}} } } });
+}
 
 /* ====================================================================
  * 7. QUẢN TRỊ
