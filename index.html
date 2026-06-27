@@ -1899,8 +1899,6 @@ function paintDashboard(m){
     '<div class="hidden sm:block"><label class="text-xs text-slate-500">Nhóm</label><select id="ovGroup" class="field" style="min-width:140px" onchange="applyOverviewFilter(true)"></select></div>'+
   '</div></div>'+
   '<div id="salesKpi" class="mb-4"><div class="grid grid-cols-2 md:grid-cols-4 gap-3"><div class="card p-4 text-center text-slate-400 py-6">Đang tải…</div></div></div>'+
-  '<div id="ugBanner"></div>'+
-  '<div id="npBanner"></div>'+
   // 3) Biểu đồ doanh số + bộ lọc Ngày/Tháng/Năm góc phải · 4) Bảng chi tiết
   '<div class="card p-4 mb-3"><div class="flex flex-wrap items-center justify-between gap-2 mb-3">'+
     '<div class="font-semibold text-slate-700">Doanh số theo ngày & nhóm</div>'+
@@ -1916,9 +1914,12 @@ function paintDashboard(m){
   '<div class="grid md:grid-cols-2 gap-3 mb-3">'+
     '<div class="card p-4"><div class="font-semibold mb-2 text-slate-700">Nhập vs Xuất (30 ngày)</div><canvas id="cD1" height="180"></canvas></div>'+
     '<div class="card p-4"><div class="font-semibold mb-2 text-slate-700">Top 10 SKU bán chạy</div><canvas id="cD2" height="180"></canvas></div></div>'+
-  '<div class="grid md:grid-cols-2 gap-3">'+
+  '<div class="grid md:grid-cols-2 gap-3 mb-3">'+
     '<div class="card p-4" id="lowStockCard"><div class="text-center text-slate-400 py-4">Đang tải…</div></div>'+
-    '<div class="card p-4" id="overdueCard"><div class="text-center text-slate-400 py-4">Đang tải…</div></div></div>';
+    '<div class="card p-4" id="overdueCard"><div class="text-center text-slate-400 py-4">Đang tải…</div></div></div>'+
+  // Banner cảnh báo đưa xuống DƯỚI CÙNG
+  '<div id="ugBanner"></div>'+
+  '<div id="npBanner"></div>';
   buildOvFilters(); applyOverviewFilter(false);
 }
 /* ---- Bộ lọc thanh header Overview: năm / tháng / khoảng ngày / nhóm ---- */
