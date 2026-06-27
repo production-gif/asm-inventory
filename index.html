@@ -577,7 +577,7 @@ async function api(action, p){
       var sm={}; (chk(await sb.from('master_sku').select('sku_code,product_name,volume_m3'))||[]).forEach(function(s){sm[s.sku_code]=s;});
       var oscans=chk(await sb.from('outbound_scans').select('*').eq('loading_id',p.loading_id))||[];
       var need={};
-      lns.forEach(function(l){ var k=l.sku_code; need[k]=need[k]||{sku_code:k,product_name:l.product_name||(sm[k]?sm[k].product_name:k),ordered:0,scanned:0,volume_each:(sm[k]?(+sm[k].volume_m3||0):0),perSO:[]}; need[k].ordered+=(+l.qty_ordered||0); need[k].perSO.push({so_number:l.so_number,delivery_date:hmap[l.so_number]?hmap[l.so_number].delivery_date:'',ordered:(+l.qty_ordered||0),scanned:0}); });
+      lns.forEach(function(l){ var k=l.sku_code; if(!k||!String(k).trim()) return; /* bỏ dòng phí/không-mã, không phải hàng để quét */ need[k]=need[k]||{sku_code:k,product_name:l.product_name||(sm[k]?sm[k].product_name:k),ordered:0,scanned:0,volume_each:(sm[k]?(+sm[k].volume_m3||0):0),perSO:[]}; need[k].ordered+=(+l.qty_ordered||0); need[k].perSO.push({so_number:l.so_number,delivery_date:hmap[l.so_number]?hmap[l.so_number].delivery_date:'',ordered:(+l.qty_ordered||0),scanned:0}); });
       var svol=0;
       oscans.filter(function(s){return s.validation_status==='OK';}).forEach(function(s){ var k=s.sku_code; if(need[k]){ need[k].scanned+=(+s.qty||1); var per=need[k].perSO.filter(function(x){return String(x.so_number)===String(s.so_number);})[0]; if(per)per.scanned+=(+s.qty||1);} if(sm[k]) svol+=(+sm[k].volume_m3||0)*(+s.qty||1); });
       svol=Math.round(svol*1000)/1000;
@@ -641,7 +641,7 @@ async function api(action, p){
       function r2(x){ return Math.round((x||0)*100)/100; }
       var SHIP_ST={'Fulfilled':1,'Issued':1,'In Progress':1};
       var gmapS={}; (await pageAll(function(a,b){return sb.from('master_sku').select('sku_code,sku_group').range(a,b);})).forEach(function(s){ gmapS[s.sku_code]=(s.sku_group||'').trim(); });
-      var byDate={}, groupsSet={}, ungAgg={};
+      var byDate={}, groupsSet={}, ungAgg={}, statAgg={}, npAgg={};
       function bd(d){ if(!byDate[d]) byDate[d]={ship:0,recv:0,qship:0,qrecv:0,gs:{},gr:{},qsg:{}}; return byDate[d]; }
       function markUng(sku,pname,sv,ov,sq,oq){ if(!ungAgg[sku]) ungAgg[sku]={sku_code:sku, product_name:pname||sku, in_master:gmapS.hasOwnProperty(sku), val_ship:0, val_recv:0, qty_ship:0, qty_recv:0}; var u=ungAgg[sku]; u.val_ship+=sv; u.val_recv+=ov; u.qty_ship+=sq; u.qty_recv+=oq; }
 
@@ -649,12 +649,16 @@ async function api(action, p){
       var hmapS={}, statMap={}, soNumsS=[]; heads.forEach(function(h){ if(h.delivery_date){ hmapS[h.so_number]=String(h.delivery_date).slice(0,10); statMap[h.so_number]=h.status||''; soNumsS.push(h.so_number); } });
       for(var ci=0;ci<soNumsS.length;ci+=200){ var chunk=soNumsS.slice(ci,ci+200), off=0, page;
         do{ page=chk(await sb.from('so_lines').select('so_number,sku_code,product_name,qty_ordered,ordered_price').in('so_number',chunk).range(off,off+999))||[];
-          page.forEach(function(l){ var d=hmapS[l.so_number]; if(!d) return; var hasG=!!gmapS[l.sku_code]; var g=hasG?gmapS[l.sku_code]:'(Khác)';
+          page.forEach(function(l){ var d=hmapS[l.so_number]; if(!d) return;
+            var sku=l.sku_code, noPart=!(sku&&String(sku).trim());
+            var hasG=!noPart&&!!gmapS[sku]; var g=(!noPart&&hasG)?gmapS[sku]:'(Khác)';
             var ov=+l.ordered_price||0, oq=+l.qty_ordered||0; if(ov===0&&oq===0) return; groupsSet[g]=1;
+            var stt=statMap[l.so_number]||'(trống)'; if(!statAgg[stt]) statAgg[stt]={status:stt,amount:0,qty:0}; statAgg[stt].amount+=ov; statAgg[stt].qty+=oq;
             var qualifies=!!SHIP_ST[statMap[l.so_number]]; var sv=qualifies?ov:0, sq=qualifies?oq:0;
             var o=bd(d); o.recv+=ov; o.qrecv+=oq; o.gr[g]=(o.gr[g]||0)+ov;
             if(qualifies){ o.ship+=sv; o.qship+=sq; o.gs[g]=(o.gs[g]||0)+sv; o.qsg[g]=(o.qsg[g]||0)+sq; }
-            if(!hasG) markUng(l.sku_code,l.product_name,sv,ov,sq,oq); });
+            if(noPart){ var nm=l.product_name||'(không tên)'; if(!npAgg[nm]) npAgg[nm]={name:nm,amount:0,qty:0,count:0}; npAgg[nm].amount+=ov; npAgg[nm].qty+=oq; npAgg[nm].count++; }
+            else if(!hasG){ markUng(sku,l.product_name,sv,ov,sq,oq); } });
           off+=1000;
         } while(page.length===1000); }
 
@@ -662,7 +666,9 @@ async function api(action, p){
       var ungrouped=Object.keys(ungAgg).map(function(k){var u=ungAgg[k]; u.val_ship=r2(u.val_ship); u.val_recv=r2(u.val_recv); return u;}).sort(function(a,b){return (b.val_ship+b.val_recv)-(a.val_ship+a.val_recv);});
       var dayList=[]; for(var dd=fromD; dd<=toD; dd=addDays(dd,1)){ dayList.push(dd); if(dayList.length>370) break; }
       var rows=dayList.map(function(d){ var o=byDate[d]; var row={date:d, ship_total:o?r2(o.ship):0, recv_total:o?r2(o.recv):0, qty_ship:o?o.qship:0, qty_recv:o?o.qrecv:0, ship:{}, recv:{}, qs:{}}; groups.forEach(function(g){ row.ship[g]=(o&&o.gs[g])?r2(o.gs[g]):0; row.recv[g]=(o&&o.gr[g])?r2(o.gr[g]):0; row.qs[g]=(o&&o.qsg[g])?o.qsg[g]:0; }); return row; });
-      return {from:fromD, to:toD, groups:groups, rows:rows, ungrouped:ungrouped};
+      var byStatus=Object.keys(statAgg).map(function(k){var s=statAgg[k]; s.amount=r2(s.amount); return s;}).sort(function(a,b){return b.amount-a.amount;});
+      var noParts=Object.keys(npAgg).map(function(k){var n=npAgg[k]; n.amount=r2(n.amount); return n;}).sort(function(a,b){return b.amount-a.amount;});
+      return {from:fromD, to:toD, groups:groups, rows:rows, ungrouped:ungrouped, byStatus:byStatus, noParts:noParts};
     }
 
     case 'importSKU': {
@@ -712,14 +718,16 @@ async function api(action, p){
       var MAP={so_number:'SO #',customer:'Customer',customer_po:'Customer PO',sales_person:'Sales Person',state:'State / Province',so_class:'Class',location_group:'Location Group',status:'Order Status',so_date:'Order Date Issued',delivery_date:'Order Date Scheduled',fulfilled_date:'Order Date Fulfilled',sku_code:'Product Number',product_name:'Description',qty_ordered:'Ordered Qty',uom:'UOM',ordered_price:'Ordered Price',qty_shipped:'Shipped Qty',shipped_price:'Shipped Price',remaining_qty:'Remaining Qty',remaining_price:'Remaining Price',item_status:'Item Status',item_type:'Item Type',item_date_scheduled:'Item Date Scheduled',item_date_fulfilled:'Item Date Fulfilled'};
       var ix2={}; Object.keys(MAP).forEach(function(f){ var k=nz(MAP[f]); ix2[f]=(hnorm[k]!=null?hnorm[k]:-1); });
       var soH={}, soL=[], skuSeen={}, soAmt={};
-      for(var j=hdi+1;j<rw.length;j++){ var rr=rw[j]; if(!rr||!rr.length)continue; var so=val(rr,ix2.so_number),sku3=val(rr,ix2.sku_code); if(!so||!sku3)continue; if(nz(so)==='so #')continue; /* bỏ dòng header lặp lại giữa file */ var st=val(rr,ix2.status); /* ghi nhận MỌI trạng thái, kể cả Estimate (giữ nguyên status) */
+      for(var j=hdi+1;j<rw.length;j++){ var rr=rw[j]; if(!rr||!rr.length)continue; var so=val(rr,ix2.so_number),sku3=val(rr,ix2.sku_code); if(!so)continue; if(nz(so)==='so #')continue; /* bỏ dòng header lặp lại giữa file */ var st=val(rr,ix2.status); /* ghi nhận MỌI trạng thái, kể cả Estimate (giữ nguyên status) */
         // raw = TOÀN BỘ cột A->Z của dòng này (header -> giá trị)
         var raw={}; for(var ci=0;ci<hd.length;ci++){ var key=String(hd[ci]||'').trim(); if(key) raw[key]=val(rr,ci); }
-        var op=moneyNum(val(rr,ix2.ordered_price));
+        var op=moneyNum(val(rr,ix2.ordered_price)); var oqv=intOrNull(val(rr,ix2.qty_ordered))||0;
         if(!soH[so]) soH[so]={so_number:so,customer:val(rr,ix2.customer),customer_po:val(rr,ix2.customer_po),sales_person:val(rr,ix2.sales_person),state:val(rr,ix2.state),so_class:val(rr,ix2.so_class),location_group:val(rr,ix2.location_group),so_date:dateOrNull(val(rr,ix2.so_date)),delivery_date:dateOrNull(val(rr,ix2.delivery_date)),fulfilled_date:dateOrNull(val(rr,ix2.fulfilled_date)),status:st||'Issued',created_by:session.username};
         soAmt[so]=(soAmt[so]||0)+(op||0);
-        soL.push({so_number:so,sku_code:sku3,product_name:val(rr,ix2.product_name),qty_ordered:intOrNull(val(rr,ix2.qty_ordered))||0,qty_shipped:intOrNull(val(rr,ix2.qty_shipped))||0,uom:val(rr,ix2.uom),ordered_price:op,shipped_price:moneyNum(val(rr,ix2.shipped_price)),remaining_qty:intOrNull(val(rr,ix2.remaining_qty)),remaining_price:moneyNum(val(rr,ix2.remaining_price)),item_status:val(rr,ix2.item_status),item_type:val(rr,ix2.item_type),item_date_scheduled:dateOrNull(val(rr,ix2.item_date_scheduled)),item_date_fulfilled:dateOrNull(val(rr,ix2.item_date_fulfilled)),raw:raw});
-        if(!skuSeen[sku3]) skuSeen[sku3]=val(rr,ix2.product_name);
+        // Bỏ dòng RỖNG hẳn (không mã, không tiền, không SL). Dòng có tiền/SL nhưng KHÔNG mã (Freight, Fedex, mẫu...) vẫn GIỮ để tính doanh số.
+        if(!sku3 && !op && !oqv) continue;
+        soL.push({so_number:so,sku_code:sku3,product_name:val(rr,ix2.product_name),qty_ordered:oqv,qty_shipped:intOrNull(val(rr,ix2.qty_shipped))||0,uom:val(rr,ix2.uom),ordered_price:op,shipped_price:moneyNum(val(rr,ix2.shipped_price)),remaining_qty:intOrNull(val(rr,ix2.remaining_qty)),remaining_price:moneyNum(val(rr,ix2.remaining_price)),item_status:val(rr,ix2.item_status),item_type:val(rr,ix2.item_type),item_date_scheduled:dateOrNull(val(rr,ix2.item_date_scheduled)),item_date_fulfilled:dateOrNull(val(rr,ix2.item_date_fulfilled)),raw:raw});
+        if(sku3 && !skuSeen[sku3]) skuSeen[sku3]=val(rr,ix2.product_name);
       }
       var soArr=Object.keys(soH);
       var withDeliv=soArr.filter(function(s){return !!soH[s].delivery_date;}).length;
@@ -913,6 +921,12 @@ var I18N_PAIRS = [
   ['Nhập vs Xuất (30 ngày)','In vs Out (30 days)'],['Top 10 SKU bán chạy','Top 10 best-selling SKUs'],
   ['Nhập','In'],['Xuất','Out'],
   ['Doanh số theo ngày & nhóm (đã xuất)','Sales by day & group (shipped)'],['Doanh số theo ngày & nhóm','Sales by day & group'],
+  ['Doanh số theo trạng thái (Order Status)','Sales by status (Order Status)'],['Trạng thái','Status'],['Số tiền','Amount'],
+  ['Xem để tạo part','View to create parts'],['Dòng chưa có part','Lines without a part'],
+  ['Mô tả (Description)','Description'],['Số dòng','Lines'],['Số lượng','Quantity'],
+  ['Phí/ship/mẫu… có doanh số nhưng chưa gắn mã sản phẩm.','Freight/shipping/samples… have revenue but no product code.'],
+  ['Các dòng có doanh số nhưng KHÔNG có Product Number (phí ship, mẫu…). Vẫn được tính vào doanh số. Hãy tạo part/SKU cho chúng trong ERP rồi gán Product Number để theo dõi đầy đủ.','Lines with revenue but NO Product Number (freight, samples…). Still counted in revenue. Create a part/SKU for them in the ERP and assign a Product Number for full tracking.'],
+  ['Không có dòng thiếu part trong kỳ ✓','No lines missing a part in this period ✓'],
   ['ĐÃ XUẤT','SHIPPED'],['ĐÃ NHẬN','RECEIVED'],['đã xuất','shipped'],['đã nhận','received'],
   ['Tổng đã xuất','Total shipped'],['Tổng đã nhận','Total received'],
   ['so với kỳ trước','vs previous period'],['Mới','New'],
@@ -1880,6 +1894,7 @@ function paintDashboard(m,d){
   '</div></div>'+
   '<div id="salesKpi" class="mb-4"><div class="grid grid-cols-2 md:grid-cols-4 gap-3"><div class="card p-4 text-center text-slate-400 py-6">Đang tải…</div></div></div>'+
   '<div id="ugBanner"></div>'+
+  '<div id="npBanner"></div>'+
   // 3) Biểu đồ doanh số + bộ lọc Ngày/Tháng/Năm góc phải · 4) Bảng chi tiết
   '<div class="card p-4 mb-3"><div class="flex flex-wrap items-center justify-between gap-2 mb-3">'+
     '<div class="font-semibold text-slate-700">Doanh số theo ngày & nhóm</div>'+
@@ -1888,6 +1903,9 @@ function paintDashboard(m,d){
       '<button class="granbtn btn btn-ghost" data-g="year" onclick="setGran(\'year\')" style="min-height:34px;padding:0 12px;font-size:13px;border-radius:8px">Năm</button></div></div>'+
     '<div style="position:relative;height:300px"><canvas id="cSales"></canvas></div>'+
     '<div class="overflow-auto mt-3" id="srBody"><div class="text-center text-slate-400 py-6">Đang tải…</div></div></div>'+
+  '<div class="card p-4 mb-3"><div class="font-semibold text-slate-700 mb-3">Doanh số theo trạng thái (Order Status)</div>'+
+    '<div style="position:relative;height:240px"><canvas id="cStatus"></canvas></div>'+
+    '<div id="statusTbl" class="overflow-auto mt-3"></div></div>'+
   // 5) Các cụm phụ đưa xuống dưới cùng
   '<div class="grid md:grid-cols-2 gap-3 mb-3">'+
     '<div class="card p-4"><div class="font-semibold mb-2 text-slate-700">Nhập vs Xuất (30 ngày)</div><canvas id="cD1" height="180"></canvas></div>'+
@@ -1926,6 +1944,20 @@ function applyOverviewFilter(useInputs){
 }
 function prevEqualRange(from,to){ var days=Math.round((Date.parse(to+'T00:00:00Z')-Date.parse(from+'T00:00:00Z'))/86400000)+1; var pto=addDays(from,-1); var pfrom=addDays(pto,-(days-1)); return {from:pfrom, to:pto}; }
 function kpi(label,val,color,icon){ return '<div class="card p-4"><div class="kpi-top"><span class="kpi-label">'+label+'</span><span class="kpi-dot" style="background:'+color+';color:#fff">'+(icon||'')+'</span></div><div class="num" style="color:'+color+'">'+val+'</div></div>'; }
+
+/* ---- MÀN HÌNH: DÒNG CHƯA CÓ PART (Product Number) ---- */
+function openNoPart(){
+  var m=document.getElementById('main'); var rep=window._salesRep||{noParts:[]}; var list=(rep.noParts||[]);
+  m.innerHTML=
+   '<button class="btn btn-ghost mb-4" onclick="go(\'dashboard\')">← Tổng quan</button>'+
+   '<div class="sectiontitle mb-1">Dòng chưa có part <span class="text-slate-400" style="font-weight:600">('+list.length+')</span></div>'+
+   '<div class="text-sm text-slate-500 mb-3">Các dòng có doanh số nhưng KHÔNG có Product Number (phí ship, mẫu…). Vẫn được tính vào doanh số. Hãy tạo part/SKU cho chúng trong ERP rồi gán Product Number để theo dõi đầy đủ.</div>'+
+   '<div class="card overflow-auto"><table><thead><tr><th>Mô tả (Description)</th><th class="text-center">Số dòng</th><th class="text-right">Số lượng</th><th class="text-right">Số tiền</th></tr></thead><tbody>'+
+   (list.length? list.map(function(n){ return '<tr><td>'+(n.name||'')+'</td><td class="text-center">'+n.count+'</td><td class="text-right">'+(n.qty||0)+'</td><td class="text-right font-bold" style="color:var(--green)">'+fmtMoney(n.amount)+'</td></tr>'; }).join('')
+     +'<tr class="soft"><td class="font-bold">Tổng</td><td class="text-center font-bold">'+list.reduce(function(a,n){return a+n.count;},0)+'</td><td class="text-right font-bold">'+list.reduce(function(a,n){return a+(n.qty||0);},0)+'</td><td class="text-right font-bold" style="color:var(--green)">'+fmtMoney(list.reduce(function(a,n){return a+n.amount;},0))+'</td></tr>'
+     : '<tr><td colspan="4" class="text-center text-slate-400 py-8">Không có dòng thiếu part trong kỳ ✓</td></tr>')+
+   '</tbody></table></div>';
+}
 
 /* ---- MÀN HÌNH: MÃ CHƯA CÓ NHÓM (cảnh báo + gán nhóm nhanh) ---- */
 function ungroupedList(){ return (cache.skus||[]).filter(function(s){ return !(s.sku_group&&String(s.sku_group).trim()); }); }
@@ -1975,7 +2007,10 @@ async function loadSalesReport(){
     var rep=await api('reportSales',{from:_ov.from,to:_ov.to}); window._salesRep=rep;
     var ug=rep.ungrouped||[]; var bn=document.getElementById('ugBanner');
     if(bn) bn.innerHTML = ug.length ? '<div class="card p-4 mb-3" style="border-left:4px solid var(--amber)"><div class="flex items-center justify-between gap-3 flex-wrap"><div><div class="font-semibold" style="color:var(--amber)">⚠ '+ug.length+' mã chưa có nhóm</div><div class="text-xs text-slate-500">Các mã này rơi vào cột "(Khác)" trong báo cáo.</div></div><button class="btn btn-amber" onclick="openUngrouped()">Bổ sung nhóm</button></div></div>' : '';
+    var np=rep.noParts||[]; var npB=document.getElementById('npBanner');
+    if(npB) npB.innerHTML = np.length ? '<div class="card p-4 mb-3" style="border-left:4px solid var(--red)"><div class="flex items-center justify-between gap-3 flex-wrap"><div><div class="font-semibold" style="color:var(--red)">⚠ '+np.length+' dòng chưa có part (Product Number)</div><div class="text-xs text-slate-500">Phí/ship/mẫu… có doanh số nhưng chưa gắn mã sản phẩm.</div></div><button class="btn btn-red" onclick="openNoPart()">Xem để tạo part</button></div></div>' : '';
     renderSalesView();
+    renderStatusChart(rep.byStatus||[]);
   }catch(e){ if(document.getElementById('srBody')) document.getElementById('srBody').innerHTML='<div class="card p-3">'+e.message+'</div>'; }
 }
 // Gộp dữ liệu ngày -> theo Ngày / Tháng / Năm
@@ -2003,6 +2038,20 @@ function renderSalesView(){
   updateGranBtns();
 }
 function setGran(g){ _ov.gran=g; renderSalesView(); }
+function statusChart(id,labels,data,colors){
+  if(_chart[id])_chart[id].destroy();
+  _chart[id]=new Chart(document.getElementById(id),{type:'bar',data:{labels:labels,datasets:[{data:data,backgroundColor:colors,borderRadius:6}]},options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:function(c){return fmtMoney(c.parsed.x);}}}},scales:{x:{beginAtZero:true,ticks:{callback:function(v){return '$'+(v>=1000?Math.round(v/1000)+'k':v);}}},y:{ticks:{font:{size:11}}}}}});
+}
+function renderStatusChart(arr){
+  var labels=arr.map(function(s){return s.status;});
+  var data=arr.map(function(s){return s.amount;});
+  var colors=arr.map(function(s){ return s.status==='Fulfilled'?'#22C55E':(s.status==='Estimate'?'#94A3B8':(s.status==='In Progress'?'#06B6D4':(s.status==='Issued'?'#6366F1':'#F59E0B'))); });
+  statusChart('cStatus',labels,data,colors);
+  var tot=arr.reduce(function(a,s){return a+s.amount;},0); var t=document.getElementById('statusTbl');
+  if(t) t.innerHTML = arr.length ? '<table style="white-space:nowrap"><thead><tr><th>'+L('Trạng thái')+'</th><th class="text-right">'+L('Số tiền')+'</th><th class="text-right">'+L('SL')+'</th><th class="text-right">%</th></tr></thead><tbody>'+
+    arr.map(function(s){return '<tr><td>'+s.status+'</td><td class="text-right font-bold">'+fmtMoney(s.amount)+'</td><td class="text-right">'+s.qty+'</td><td class="text-right text-slate-500">'+(tot?Math.round(s.amount/tot*100):0)+'%</td></tr>';}).join('')+
+    '<tr class="soft"><td class="font-bold">'+L('Tổng')+'</td><td class="text-right font-bold" style="color:var(--green)">'+fmtMoney(tot)+'</td><td></td><td></td></tr></tbody></table>' : '<div class="text-center text-slate-400 py-4">'+L('Không có dữ liệu')+'</div>';
+}
 function updateGranBtns(){ var g=_ov.gran||'day'; [].forEach.call(document.querySelectorAll('.granbtn'),function(b){ var on=b.getAttribute('data-g')===g; b.classList.toggle('btn-navy',on); b.classList.toggle('btn-ghost',!on); }); }
 function renderSalesTable(rep, groups){
   groups=groups||rep.groups; if(!groups.length) return '<div class="text-center text-slate-400 py-6">'+L('Không có dữ liệu')+'</div>';
