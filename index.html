@@ -640,7 +640,7 @@ async function api(action, p){
       var toD=p.to||localDate(new Date()); var fromD=p.from||addDays(toD,-29);
       function r2(x){ return Math.round((x||0)*100)/100; }
       var SHIP_ST={'Fulfilled':1,'Issued':1,'In Progress':1};
-      var gmapS={}; (await pageAll(function(a,b){return sb.from('master_sku').select('sku_code,sku_group').range(a,b);})).forEach(function(s){ gmapS[s.sku_code]=(s.sku_group||'').trim(); });
+      var gmapS={}; (cache.skus||[]).forEach(function(s){ gmapS[s.sku_code]=(s.sku_group||'').trim(); }); // dùng cache -> không truy vấn lại master_sku mỗi lần
       var byDate={}, groupsSet={}, ungAgg={}, statAgg={}, npAgg={};
       function bd(d){ if(!byDate[d]) byDate[d]={ship:0,recv:0,qship:0,qrecv:0,gs:{},gr:{},qsg:{}}; return byDate[d]; }
       function markUng(sku,pname,sv,ov,sq,oq){ if(!ungAgg[sku]) ungAgg[sku]={sku_code:sku, product_name:pname||sku, in_master:gmapS.hasOwnProperty(sku), val_ship:0, val_recv:0, qty_ship:0, qty_recv:0}; var u=ungAgg[sku]; u.val_ship+=sv; u.val_recv+=ov; u.qty_ship+=sq; u.qty_recv+=oq; }
@@ -1877,13 +1877,19 @@ function toggleGrp(i){ var d=document.getElementById('gdet'+i), c=document.getEl
  * ==================================================================== */
 var _dashMemo=null;
 function viewDashboard(m){
-  if(_dashMemo){ paintDashboard(m,_dashMemo); }   // hiện ngay số liệu lần trước
-  else m.innerHTML='<div class="text-center text-slate-400 py-12">Đang tải…</div>';
-  // gửi rỗng -> máy chủ tự dùng ngày của nó (tránh lệch giờ trình duyệt)
-  api('reportDashboard',{date:''}).then(function(d){ _dashMemo=d; if(currentView==='dashboard') paintDashboard(m,d); })
-    .catch(function(e){ if(!_dashMemo && currentView==='dashboard') m.innerHTML='<div class="card p-4">'+e.message+'</div>'; });
+  paintDashboard(m);                       // dựng khung + nạp doanh số 1 LẦN
+  if(_dashMemo) fillDashClusters(_dashMemo);
+  // các cụm phụ (Nhập/Xuất 30 ngày, Top SKU, sắp hết, quá hạn) cập nhật riêng, KHÔNG vẽ lại toàn trang
+  api('reportDashboard',{date:''}).then(function(d){ _dashMemo=d; if(currentView==='dashboard') fillDashClusters(d); }).catch(function(){});
 }
-function paintDashboard(m,d){
+function fillDashClusters(d){
+  if(!d) return;
+  if(document.getElementById('cD1')) lineChart('cD1',d.days.map(function(x){return x.slice(5);}),d.line_in,d.line_out);
+  if(document.getElementById('cD2')) barChart('cD2',d.top_sku.map(function(x){return x.sku_code;}),d.top_sku.map(function(x){return x.qty;}),'var(--red)');
+  var lc=document.getElementById('lowStockCard'); if(lc) lc.innerHTML='<div class="font-semibold mb-2" style="color:var(--red)">⚠ SKU sắp hết ('+d.low_stock.length+')</div><div class="text-sm space-y-1">'+(d.low_stock.slice(0,15).map(function(x){return '<div>'+x.sku_code+': <b>'+x.qty+'</b></div>';}).join('')||'<span class="text-slate-400">Không có</span>')+'</div>';
+  var oc=document.getElementById('overdueCard'); if(oc) oc.innerHTML='<div class="font-semibold mb-2" style="color:var(--amber)">⏰ SO quá hạn ('+d.overdue.length+')</div><div class="text-sm space-y-1">'+(d.overdue.slice(0,15).map(function(x){return '<div>'+x.so_number+' — '+x.customer+' <span class="text-slate-400">('+x.delivery_date+')</span></div>';}).join('')||'<span class="text-slate-400">Không có</span>')+'</div>';
+}
+function paintDashboard(m){
   m.innerHTML=
   '<div id="ovFilter" class="card p-3 mb-4"><div class="flex flex-wrap items-end gap-2">'+
     '<div><label class="text-xs text-slate-500">Năm</label><select id="ovYear" class="field" style="min-width:96px" onchange="applyOverviewFilter(false)"></select></div>'+
@@ -1911,9 +1917,8 @@ function paintDashboard(m,d){
     '<div class="card p-4"><div class="font-semibold mb-2 text-slate-700">Nhập vs Xuất (30 ngày)</div><canvas id="cD1" height="180"></canvas></div>'+
     '<div class="card p-4"><div class="font-semibold mb-2 text-slate-700">Top 10 SKU bán chạy</div><canvas id="cD2" height="180"></canvas></div></div>'+
   '<div class="grid md:grid-cols-2 gap-3">'+
-    '<div class="card p-4"><div class="font-semibold mb-2" style="color:var(--red)">⚠ SKU sắp hết ('+d.low_stock.length+')</div><div class="text-sm space-y-1">'+(d.low_stock.slice(0,15).map(function(x){return '<div>'+x.sku_code+': <b>'+x.qty+'</b></div>';}).join('')||'<span class="text-slate-400">Không có</span>')+'</div></div>'+
-    '<div class="card p-4"><div class="font-semibold mb-2" style="color:var(--amber)">⏰ SO quá hạn ('+d.overdue.length+')</div><div class="text-sm space-y-1">'+(d.overdue.slice(0,15).map(function(x){return '<div>'+x.so_number+' — '+x.customer+' <span class="text-slate-400">('+x.delivery_date+')</span></div>';}).join('')||'<span class="text-slate-400">Không có</span>')+'</div></div></div>';
-  lineChart('cD1',d.days.map(function(x){return x.slice(5);}),d.line_in,d.line_out); barChart('cD2',d.top_sku.map(function(x){return x.sku_code;}),d.top_sku.map(function(x){return x.qty;}),'var(--red)');
+    '<div class="card p-4" id="lowStockCard"><div class="text-center text-slate-400 py-4">Đang tải…</div></div>'+
+    '<div class="card p-4" id="overdueCard"><div class="text-center text-slate-400 py-4">Đang tải…</div></div></div>';
   buildOvFilters(); applyOverviewFilter(false);
 }
 /* ---- Bộ lọc thanh header Overview: năm / tháng / khoảng ngày / nhóm ---- */
@@ -1940,7 +1945,8 @@ function applyOverviewFilter(useInputs){
   else { var r=ovComputeRange(); from=r.from; to=r.to; var fi=document.getElementById('ovFrom'), ti=document.getElementById('ovTo'); if(fi)fi.value=from; if(ti)ti.value=to; }
   if(!from||!to) return; if(from>to){ var tmp=from; from=to; to=tmp; }
   _ov.from=from; _ov.to=to; _ov.group=(document.getElementById('ovGroup')||{}).value||'';
-  loadSalesKPI(); loadSalesReport();
+  // chạy báo cáo TRƯỚC (đặt window._salesRep) -> KPI tái dùng dữ liệu kỳ hiện tại, đỡ 1 lượt gọi
+  loadSalesReport().then(function(){ loadSalesKPI(); });
 }
 function prevEqualRange(from,to){ var days=Math.round((Date.parse(to+'T00:00:00Z')-Date.parse(from+'T00:00:00Z'))/86400000)+1; var pto=addDays(from,-1); var pfrom=addDays(pto,-(days-1)); return {from:pfrom, to:pto}; }
 function kpi(label,val,color,icon){ return '<div class="card p-4"><div class="kpi-top"><span class="kpi-label">'+label+'</span><span class="kpi-dot" style="background:'+color+';color:#fff">'+(icon||'')+'</span></div><div class="num" style="color:'+color+'">'+val+'</div></div>'; }
@@ -2105,11 +2111,14 @@ async function loadSalesKPI(){
   if(!_ov.from||!_ov.to) return;
   var cur={from:_ov.from,to:_ov.to}, prev=prevEqualRange(cur.from,cur.to), today=serverToday();
   try{
-    var A=await api('reportSales',{from:cur.from,to:cur.to});
+    // Tái dùng dữ liệu kỳ hiện tại từ loadSalesReport (window._salesRep) -> không gọi lại
+    var A=(window._salesRep && window._salesRep.from===cur.from && window._salesRep.to===cur.to) ? window._salesRep : await api('reportSales',{from:cur.from,to:cur.to});
     var B=await api('reportSales',{from:prev.from,to:prev.to});
-    var T=await api('reportSales',{from:today,to:today});
     function agg(rep){ var o={ship:{},recv:{},shipAll:0,recvAll:0}; (rep.rows||[]).forEach(function(r){ o.shipAll+=r.ship_total||0; o.recvAll+=r.recv_total||0; (rep.groups||[]).forEach(function(g){ o.ship[g]=(o.ship[g]||0)+((r.ship&&r.ship[g])||0); o.recv[g]=(o.recv[g]||0)+((r.recv&&r.recv[g])||0); }); }); return o; }
-    var a=agg(A), b=agg(B), t=agg(T);
+    function rowAgg(row){ var o={ship:{},recv:{},shipAll:row?row.ship_total:0,recvAll:row?row.recv_total:0}; if(row){ Object.keys(row.ship||{}).forEach(function(g){o.ship[g]=row.ship[g];}); Object.keys(row.recv||{}).forEach(function(g){o.recv[g]=row.recv[g];}); } return o; }
+    var a=agg(A), b=agg(B);
+    // "hôm nay": nếu nằm trong kỳ -> lấy từ A.rows (không gọi thêm); nếu ngoài kỳ -> gọi riêng
+    var t; if(today>=cur.from && today<=cur.to){ t=rowAgg((A.rows||[]).filter(function(r){return r.date===today;})[0]); } else { t=agg(await api('reportSales',{from:today,to:today})); }
     // Lấy nhóm THỰC TẾ trong kỳ (bỏ "(Khác)") -> tự đổi/thêm theo nhóm hiện có
     var allG=(A.groups||[]).filter(function(g){ return g && g!=='(Khác)'; });
     var GROUPS = _ov.group ? [_ov.group] : allG;
