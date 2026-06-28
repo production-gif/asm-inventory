@@ -382,11 +382,17 @@ function applyChartTheme(){
 /* logo: dùng logo.png nếu tải được, ngược lại dùng vector */
 function logoHTML(){ return document.getElementById('logoTpl').innerHTML; }
 function mountLogos(){
-  ['cfgLogo','loginLogo','sideLogo','headLogo'].forEach(function(id){ var el=document.getElementById(id); if(el) el.innerHTML=logoHTML(); });
-  // thử nạp logo.png, nếu có thì thay vào
-  var img=new Image();
-  img.onload=function(){ ['cfgLogo','loginLogo','sideLogo','headLogo'].forEach(function(id){ var el=document.getElementById(id); if(el) el.innerHTML='<img src="./logo.png" style="height:'+(id==='headLogo'?28:46)+'px">'; }); };
-  img.src='./logo.png';
+  var ids=['cfgLogo','loginLogo','sideLogo','headLogo'];
+  ids.forEach(function(id){ var el=document.getElementById(id); if(el) el.innerHTML=logoHTML(); }); // logo vector mặc định
+  function tryLoad(cands, cb){ var i=0; (function next(){ if(i>=cands.length){ cb(null); return; } var u=cands[i++]; var im=new Image(); im.onload=function(){ cb(u); }; im.onerror=next; im.src=u; })(); }
+  // Logo công ty: ưu tiên thư mục ./logo/ , rồi tới cạnh index.html ; hỗ trợ PNG & SVG (gồm tên image.png)
+  function logoImg(u,id){ var h=(id==='headLogo')?30:44; return '<img src="'+u+'" alt="logo" style="height:'+h+'px;width:auto;max-width:'+(id==='headLogo'?200:230)+'px;object-fit:contain;display:block">'; }
+  tryLoad(['./logo/logo.png','./logo/logo.svg','./logo/image.png','./logo.png','./logo.svg'], function(u){
+    if(!u) return;
+    ids.forEach(function(id){ var el=document.getElementById(id); if(el) el.innerHTML=logoImg(u,id); });
+    // Bản logo cho NỀN TỐI (sidebar) nếu có -> dùng riêng cho sidebar
+    tryLoad(['./logo/logo-dark.png','./logo/logo-dark.svg'], function(ud){ if(ud){ var el=document.getElementById('sideLogo'); if(el) el.innerHTML=logoImg(ud,'sideLogo'); } });
+  });
 }
 
 /* ---------- API ---------- */
@@ -981,7 +987,13 @@ var I18N_PAIRS = [
   ['MẤT KẾT NỐI','CONNECTION LOST'],['Khâu xuất cần mạng. Vui lòng kết nối lại.','Outbound needs internet. Please reconnect.'],
   ['ĐÃ HIỂU — TIẾP TỤC','GOT IT — CONTINUE'],['SO123','SO123'],
   /* Đóng gói / Inbound */
-  ['Quét QR — Nhập kho','Scan QR — Inbound'],['✓ ĐÃ GHI','✓ RECORDED'],['Chọn SKU','Select SKU'],
+  ['Quét QR — Nhập kho','Scan QR — Inbound'],['✓ ĐÃ GHI','✓ RECORDED'],['✓ ĐÃ GHI +1','✓ RECORDED +1'],['Chọn SKU','Select SKU'],
+  ['Hôm nay bạn đã đóng gói','You packed today'],['📷 QUÉT QR NHẬP KHO','📷 SCAN QR INBOUND'],
+  ['Lượt nhập gần đây (máy này)','Recent inbound (this device)'],
+  ['+ Tạo Loading','+ New loading'],['+ Tạo đơn','+ New order'],
+  ['🔍 Tìm loading / SO / xe...','🔍 Find loading / SO / vehicle...'],
+  ['Đưa mã QR vào khung','Point the QR code into the frame'],['✕ Đóng','✕ Close'],['Quét QR','Scan QR'],
+  ['Theo SKU','By SKU'],
   ['Chọn SKU để xem trước','Select a SKU to preview'],['Xem trước tem (đúng như khi in)','Label preview (as printed)'],
   ['Khổ tem mặc định','Default label size'],['Dòng chữ thêm (tùy chọn)','Extra text (optional)'],
   ['⬇ Tải file mẫu (template) CSV','⬇ Download template CSV'],['⚠ CHƯA LƯU ĐƯỢC','⚠ NOT SAVED'],
@@ -1030,6 +1042,11 @@ var I18N_PATTERNS=[
   [/^Tất cả ngày$/, function(){return 'All days';}],
   [/^Tháng (\d+)$/, function(m){return 'Month '+m[1];}],
   [/^⚠ (\d+) mã chưa có nhóm$/, function(m){return '⚠ '+m[1]+' SKUs without group';}],
+  [/^Tổng đóng gói (.+)$/, function(m){return 'Total packed '+m[1];}],
+  [/^Tổng xuất (.+)$/, function(m){return 'Total shipped '+m[1];}],
+  [/^(\d+) cái$/, function(m){return m[1]+' pcs';}],
+  [/^Tổng hôm nay: (\d+) cái$/, function(m){return 'Today total: '+m[1]+' pcs';}],
+  [/^(.*)TẠO \/ IN TEM QR$/, function(m){return (m[1]||'')+'CREATE / PRINT QR LABELS';}],
   [/^Số lượng \(cái\)$/, function(){return 'Quantity (pcs)';}],
   [/^Chi tiết theo mã (.+)$/, function(m){return 'Detail by code '+m[1];}],
   [/^Quét xuất — (.+)$/, function(m){return 'Outbound scan — '+m[1];}],
@@ -1624,7 +1641,7 @@ function viewProducts(m){
   window._prRender=render;
   var groups=uniqSorted((cache.skus||[]).map(function(s){return s.sku_group;}));
   m.innerHTML=
-  '<div class="flex flex-wrap items-center justify-between gap-2 mb-3"><div class="sectiontitle">Danh mục sản phẩm (<span id="prCount">'+(cache.skus||[]).length+'</span>)</div>'+
+  '<div class="flex flex-wrap items-center justify-between gap-2 mb-3"><div class="sectiontitle">Danh mục sản phẩm <span class="text-slate-400" style="font-weight:600">(<span id="prCount">'+(cache.skus||[]).length+'</span>)</span></div>'+
     '<button class="btn btn-ghost" onclick="exportCSV(cache.skus,\'danh-muc-san-pham.csv\')">⬇ CSV</button></div>'+
   '<div class="flex flex-wrap gap-2 mb-3">'+
     '<input id="prSearch" class="field" style="flex:1;min-width:180px" placeholder="🔍 Tìm SKU / tên / dòng..." oninput="_prRender&&_prRender()">'+
@@ -2267,11 +2284,14 @@ function stopScan(){ if(html5qr){ html5qr.stop().then(function(){html5qr.clear()
  * CẢNH BÁO + ÂM THANH + RUNG
  * ==================================================================== */
 function flashAlert(kind,title,msg,autoClose,btnLabel){
+  // dịch tiêu đề + từng dòng nội dung theo ngôn ngữ hiện tại (giữ phần dữ liệu như tên SP)
+  function trLines(s){ return String(s==null?'':s).split('\n').map(function(x){return L(x);}).join('\n'); }
+  title=trLines(title); msg=trLines(msg);
   var o=document.getElementById('alertOverlay'); o.className=''; o.classList.add(kind==='good'?'a-good':(kind==='warn'?'a-warn':'a-bad'),'flashing'); o.style.display='flex';
   var ic=document.getElementById('alertIcon'); ic.className='pop'; ic.textContent=kind==='good'?'✓':(kind==='warn'?'⚠️':'⛔');
   document.getElementById('alertTitle').textContent=title; document.getElementById('alertMsg').textContent=msg;
   if(kind==='good'){ beep(true); navigator.vibrate&&navigator.vibrate(55); } else { beep(false); navigator.vibrate&&navigator.vibrate([120,60,120]); }
-  var btn=o.querySelector('button'); btn.style.display=autoClose?'none':''; btn.textContent=btnLabel||'ĐÃ HIỂU — TIẾP TỤC';
+  var btn=o.querySelector('button'); btn.style.display=autoClose?'none':''; btn.textContent=L(btnLabel||'ĐÃ HIỂU — TIẾP TỤC');
   if(autoClose){ clearTimeout(window._aT); window._aT=setTimeout(closeAlert,1200); }
 }
 function closeAlert(){ document.getElementById('alertOverlay').style.display='none'; }
