@@ -32,7 +32,7 @@
     --line:#E2E8F0; --ink:#0F172A; --muted:#64748B; --track:#E5EAF1;
     --navy:#1B356B; --navy-2:#1B356B; --green:#16A34A; --amber:#F59E0B;
     --grad-primary:linear-gradient(135deg,#0E2148,#1B356B); --primary-ring:rgba(27,53,107,.18);
-    --sidebar-bg:linear-gradient(180deg,#0B1A3A,#13294B); --sidebar-ink:#C7D2E4; --sidebar-group:#7c8db5;
+    --sidebar-bg:#FFFFFF; --sidebar-ink:#334155; --sidebar-group:#94A3B8;
     --topbar-bg:rgba(255,255,255,.85); --scroll:#cbd5e1; --shadow:0 2px 10px -4px rgba(15,23,42,.10);
   }
   *{font-family:'Inter',system-ui,Arial,sans-serif;-webkit-tap-highlight-color:transparent}
@@ -75,18 +75,18 @@
   /* ===== SIDEBAR ===== */
   #sidebar{position:fixed;top:0;left:0;height:100%;width:var(--sidebar-w);background:var(--sidebar-bg);color:var(--sidebar-ink);z-index:50;transform:translateX(-100%);transition:transform .25s ease;display:flex;flex-direction:column;border-right:1px solid var(--line)}
   #sidebar.open{transform:none}
-  .sbrand{padding:18px 18px 14px;border-bottom:1px solid rgba(255,255,255,.08)}
+  .sbrand{padding:18px 18px 14px;border-bottom:1px solid var(--line)}
   .sbgroup{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--sidebar-group);padding:16px 20px 6px}
   .sbitem{display:flex;align-items:center;gap:12px;padding:12px 18px;margin:2px 10px;border-radius:12px;font-weight:600;font-size:15px;color:var(--sidebar-ink);cursor:pointer;transition:.12s}
-  .sbitem:hover{background:rgba(255,255,255,.07);color:#fff}
-  .sbitem.active{background:linear-gradient(135deg,var(--red),var(--red-2));color:#fff;box-shadow:0 8px 18px -8px rgba(200,16,46,.7)}
+  .sbitem:hover{background:var(--soft);color:var(--navy)}
+  .sbitem.active{background:linear-gradient(135deg,var(--red),var(--red-2));color:#fff;box-shadow:0 8px 18px -8px rgba(200,16,46,.4)}
   .sbitem .ic{width:24px;text-align:center;font-size:18px}
   #backdrop{position:fixed;inset:0;background:rgba(8,15,35,.5);backdrop-filter:blur(2px);z-index:45;display:none}
   #backdrop.show{display:block}
-  /* nút chuyển theme (segmented) */
-  .seg{display:flex;gap:4px;background:rgba(255,255,255,.06);border-radius:12px;padding:4px;margin-bottom:10px}
+  /* segmented (chọn ngôn ngữ) */
+  .seg{display:flex;gap:4px;background:var(--soft);border-radius:12px;padding:4px;margin-bottom:10px}
   .seg button{flex:1;border:none;background:transparent;color:var(--sidebar-ink);font-weight:600;font-size:13px;padding:8px;border-radius:9px;cursor:pointer}
-  .seg button.on{background:rgba(255,255,255,.16);color:#fff}
+  .seg button.on{background:#fff;color:var(--navy);box-shadow:0 1px 3px rgba(15,23,42,.12)}
 
   /* desktop: sidebar cố định, đẩy nội dung sang phải */
   @media(min-width:1024px){
@@ -263,17 +263,16 @@
   <div id="backdrop" onclick="toggleSidebar(false)"></div>
 
   <!-- SIDEBAR -->
-  <aside id="sidebar" class="on-dark">
+  <aside id="sidebar">
     <div class="sbrand"><div id="sideLogo"></div></div>
     <nav id="sbNav" class="flex-1 overflow-auto py-2"></nav>
-    <div class="p-3 border-t" style="border-color:rgba(255,255,255,.08)">
+    <div class="p-3 border-t" style="border-color:var(--line)">
       <div class="flex items-center gap-3 px-2 mb-3">
         <div id="avatar" class="w-9 h-9 rounded-full flex items-center justify-center font-bold text-white" style="background:var(--red)"></div>
-        <div class="leading-tight"><div id="sbUser" class="text-white font-semibold text-sm"></div><div id="sbRole" class="text-xs" style="color:var(--sidebar-group)"></div></div>
+        <div class="leading-tight"><div id="sbUser" class="font-semibold text-sm" style="color:var(--ink)"></div><div id="sbRole" class="text-xs" style="color:var(--sidebar-group)"></div></div>
       </div>
       <div class="seg"><button class="langbtn" data-l="en" onclick="setLang('en')">EN</button><button class="langbtn" data-l="vi" onclick="setLang('vi')">VI</button></div>
-      <div class="seg"><button id="thLight" onclick="setTheme('light')">☀ Sáng</button><button id="thDark" onclick="setTheme('dark')">🌙 Tối</button></div>
-      <button onclick="logout()" class="w-full text-left px-3 py-2 rounded-xl text-sm font-semibold" style="color:#fca5a5;background:rgba(255,255,255,.05)">⎋ Đăng xuất</button>
+      <button onclick="logout()" class="w-full text-left px-3 py-2 rounded-xl text-sm font-semibold" style="color:var(--red);background:var(--soft)">⎋ Đăng xuất</button>
     </div>
   </aside>
 
@@ -362,7 +361,7 @@ function serverToday(){ return cache.server_date || localDate(new Date()); }
 function round3(n){ return Math.round((+n||0)*1000)/1000; }
 /* ===== THEME Sáng/Tối ===== */
 function setTheme(t){
-  t = (t==='light')?'light':'dark';
+  t = 'light';   // chỉ còn chế độ SÁNG
   document.body.setAttribute('data-theme', t);
   localStorage.setItem('as_theme', t);
   var l=document.getElementById('thLight'), d=document.getElementById('thDark');
@@ -372,7 +371,7 @@ function setTheme(t){
   var app=document.getElementById('app');
   if(app && !app.classList.contains('hide') && currentView) go(currentView); // vẽ lại để chart đổi màu
 }
-function initTheme(){ setTheme(localStorage.getItem('as_theme')||'dark'); }
+function initTheme(){ setTheme('light'); }
 function applyChartTheme(){
   if(window.Chart){ var cs=getComputedStyle(document.body);
     Chart.defaults.color=(cs.getPropertyValue('--muted')||'#888').trim();
