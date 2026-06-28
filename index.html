@@ -1540,9 +1540,17 @@ async function completeLoading(){
 /* ====================================================================
  * 4. TỒN KHO
  * ==================================================================== */
+// Suy ra Size từ tên sản phẩm khi cột size trống (QUEEN/TWIN/KING/FULL/TWIN XL/CAL KING...)
+function deriveSize(name){
+  var u=String(name||'').toUpperCase();
+  var order=['SPLIT KING','CAL KING','TWIN XL','FULL XL','EASTERN KING','TWIN','FULL','QUEEN','KING'];
+  for(var i=0;i<order.length;i++){ var s=order[i]; if(new RegExp('(^|[^A-Z])'+s.replace(' ','\\s+')+'([^A-Z]|$)').test(u)) return s; }
+  return '';
+}
+function skuSize(s){ return (s&&s.size&&String(s.size).trim()) ? s.size : deriveSize(s?(s.product_name||s.sku_code):''); }
 function buildInvData(){
   var skuMap={}; cache.skus.forEach(function(s){skuMap[s.sku_code]=s;});
-  window._inv=(cache.inventory||[]).map(function(r){ var s=skuMap[r.sku_code]||{}; return {sku_code:r.sku_code,name:s.product_name||r.sku_code,size:s.size||'',line:s.line||'',in_stock:+r.qty_in_stock||0,shipped:+r.qty_shipped_total||0,created:+r.qty_created_total||0,vol:s.volume_m3||''};});
+  window._inv=(cache.inventory||[]).map(function(r){ var s=skuMap[r.sku_code]||{}; return {sku_code:r.sku_code,name:s.product_name||r.sku_code,size:s.size||deriveSize(s.product_name||r.sku_code),line:s.line||'',in_stock:+r.qty_in_stock||0,shipped:+r.qty_shipped_total||0,created:+r.qty_created_total||0,vol:s.volume_m3||''};});
 }
 function viewInventory(m){
   // 1) Vẽ NGAY từ cache (không chờ máy chủ) -> chuyển trang tức thì
@@ -1605,7 +1613,7 @@ function viewProducts(m){
     document.getElementById('prBody').innerHTML=_prRows.map(function(s,i){
       function dim(x){ return (x!=null&&x!=='')?x:'-'; }
       return '<tr class="cursor-pointer" onclick="openProductEdit('+i+')"><td>'+(s.product_name||'')+'<div class="text-xs text-slate-400">'+s.sku_code+'</div></td>'+
-        '<td>'+(s.size||'')+'</td>'+
+        '<td>'+skuSize(s)+'</td>'+
         '<td class="text-center">'+dim(s.length)+'</td><td class="text-center">'+dim(s.width)+'</td><td class="text-center">'+dim(s.height)+'</td>'+
         '<td class="text-center text-slate-500">'+(s.volume_m3||'-')+'</td>'+
         '<td>'+(s.sku_group?'<span class="pill" style="background:var(--soft);color:var(--ink)">'+s.sku_group+'</span>':'<span class="text-slate-400">-</span>')+'</td>'+
