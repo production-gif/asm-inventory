@@ -343,6 +343,10 @@ var NAV = {
   admin:{label:'Quản trị',icon:'⚙️',group:'HỆ THỐNG',sub:'SKU · User · Xe · Import'}
 };
 var session=null, cache={skus:[],inventory:[],vehicles:[],settings:{},server_date:''}, currentView=null, lastScan={value:'',t:0};
+/* ===== PHÂN QUYỀN ===== */
+function isAdmin(){ return !!(session && session.role==='admin'); }                       // Admin = toàn quyền
+function canEdit(){ return isAdmin() || !!(session && session.can_edit!==false); }          // được phép chỉnh sửa?
+function navList(){ if(!session) return []; if(session.screens && session.screens.length) return session.screens.filter(function(v){return NAV[v];}); return (ROLES[session.role]||ROLES.packer).nav; }
 // ===== MÚI GIỜ VẬN HÀNH (Texas) =====
 // Toàn bộ "ngày làm việc" tính theo giờ Texas (Central), bất kể máy mở app đặt giờ gì.
 // Dùng Intl -> tự xử lý giờ mùa hè (CST/CDT), KHÔNG hardcode lệch giờ.
@@ -467,8 +471,13 @@ async function api(action, p){
       if(!u) throw new Error('Tài khoản không tồn tại');
       if(u.active===false) throw new Error('Tài khoản đã khóa');
       if(u.pin_hash!==h) throw new Error('Sai PIN');
+      // Phân quyền theo user (lưu trong settings.user_perms) — admin = toàn quyền
+      var perms={}; try{ var ps=(chk(await sb.from('settings').select('value').eq('key','user_perms'))||[])[0]; if(ps&&ps.value) perms=JSON.parse(ps.value)||{}; }catch(e){}
+      var up=perms[u.username]||{};
+      var screens=(u.role==='admin')?null:((Array.isArray(up.screens)&&up.screens.length)?up.screens:null);
+      var canEd=(u.role==='admin')?true:(up.edit!==false);
       await audit(p.username,'login','role='+u.role);
-      return { username:u.username, role:u.role, token:'sb' };
+      return { username:u.username, role:u.role, token:'sb', screens:screens, can_edit:canEd };
     }
 
     case 'getBootstrap': {
@@ -479,6 +488,7 @@ async function api(action, p){
     }
     case 'getInventory': return { items: await pageAll(function(a,b){return sb.from('inventory').select('*').range(a,b);}) };
     case 'adjustStock': {
+      if(!session||session.role!=='admin') throw new Error('Chỉ tài khoản Admin mới được sửa tồn kho');
       var skuA=String(p.sku_code).trim(); var delta=parseInt(p.delta,10)||0;
       var rowA=(chk(await sb.from('inventory').select('*').eq('sku_code',skuA))||[])[0];
       var curA=rowA?(+rowA.qty_in_stock||0):0; var nv=curA+delta; if(nv<0)nv=0;
@@ -507,13 +517,22 @@ async function api(action, p){
       chk(await sb.from('vehicles').upsert({ vehicle_id:id, vehicle_name:p.vehicle_name||'', plate_no:p.plate_no||'', capacity_m3:numOrNull(p.capacity_m3), active:true }));
       await audit(session.username,'save_vehicle',id); return {saved:true};
     }
-    case 'getUsers': return { items: chk(await sb.from('users').select('username,role,active,created_at'))||[] };
+    case 'getUsers': {
+      var us=chk(await sb.from('users').select('username,role,active,created_at'))||[];
+      var pmG={}; try{ var prG=(chk(await sb.from('settings').select('value').eq('key','user_perms'))||[])[0]; if(prG&&prG.value) pmG=JSON.parse(prG.value)||{}; }catch(e){}
+      return { items: us, perms: pmG };
+    }
     case 'saveUser': {
       var rec={ username:p.username, role:p.role||'packer', active:true };
       if(p.pin) rec.pin_hash=await hashPin(p.pin);
       var ex=(chk(await sb.from('users').select('username').eq('username',p.username))||[])[0];
       if(!ex && !rec.pin_hash) rec.pin_hash=await hashPin('0000');
-      chk(await sb.from('users').upsert(rec)); await audit(session.username,'save_user',p.username); return {saved:true};
+      chk(await sb.from('users').upsert(rec));
+      // Lưu phân quyền vào settings.user_perms (không cần đổi schema DB)
+      var pmS={}; try{ var prS=(chk(await sb.from('settings').select('value').eq('key','user_perms'))||[])[0]; if(prS&&prS.value) pmS=JSON.parse(prS.value)||{}; }catch(e){}
+      pmS[p.username]={ screens: Array.isArray(p.screens)?p.screens:[], edit: (p.can_edit!==false) };
+      chk(await sb.from('settings').upsert({key:'user_perms', value:JSON.stringify(pmS)}));
+      await audit(session.username,'save_user',p.username+' · screens='+((p.screens||[]).join(','))+' · edit='+(p.can_edit!==false)); return {saved:true};
     }
     case 'saveSettings': {
       var vals=p.values||{}; var rows=Object.keys(vals).map(function(k){return {key:k,value:String(vals[k])};});
@@ -1008,6 +1027,15 @@ var I18N_PAIRS = [
   /* Quản trị: Nhật ký */
   ['Nhật ký','Audit log'],['Thời gian','Time'],['Hành động','Action'],['Chi tiết','Detail'],
   ['🔍 Lọc theo user / hành động / chi tiết...','🔍 Filter by user / action / detail...'],
+  /* Phân quyền */
+  ['🔒 Chỉ tài khoản Admin mới được sửa tồn kho. Bạn đang ở chế độ xem.','🔒 Only Admin can edit stock. You are in view-only mode.'],
+  ['🔒 Chế độ chỉ xem — không thể quét/in tem.','🔒 View-only — cannot scan/print labels.'],['🔒 Chế độ chỉ xem.','🔒 View-only mode.'],
+  ['Vai trò','Role'],['Màn hình được xem (phân quyền)','Visible screens (permissions)'],
+  ['Cho phép chỉnh sửa (bỏ tick = chỉ xem)','Allow editing (uncheck = view only)'],
+  ['Lưu ý: sửa tồn kho chỉ tài khoản Admin mới được.','Note: only Admin can edit stock.'],
+  ['Admin (toàn quyền)','Admin (full access)'],['Danh sách user','User list'],['Nhập username','Enter username'],
+  ['Chỉ tài khoản Admin mới được sửa tồn kho','Only Admin can edit stock'],
+  ['tất cả màn','all screens'],['mặc định vai trò','role default'],['sửa','edit'],['chỉ xem','view only'],['Chưa có user','No users'],
   ['Chọn SKU để xem trước','Select a SKU to preview'],['Xem trước tem (đúng như khi in)','Label preview (as printed)'],
   ['Khổ tem mặc định','Default label size'],['Dòng chữ thêm (tùy chọn)','Extra text (optional)'],
   ['⬇ Tải file mẫu (template) CSV','⬇ Download template CSV'],['⚠ CHƯA LƯU ĐƯỢC','⚠ NOT SAVED'],
@@ -1064,6 +1092,7 @@ var I18N_PATTERNS=[
   [/^(\d+)% \(dự kiến\)$/, function(m){return m[1]+'% (planned)';}],
   [/^(\d+)% — QUÁ TẢI!$/, function(m){return m[1]+'% — OVERLOADED!';}],
   [/^⚠ (\d+) dòng chưa có part \(Product Number\)$/, function(m){return '⚠ '+m[1]+' lines without a part (Product Number)';}],
+  [/^(\d+) màn$/, function(m){return m[1]+' screens';}],
   [/^(.*)TẠO \/ IN TEM QR$/, function(m){return (m[1]||'')+'CREATE / PRINT QR LABELS';}],
   [/^Số lượng \(cái\)$/, function(){return 'Quantity (pcs)';}],
   [/^Chi tiết theo mã (.+)$/, function(m){return 'Detail by code '+m[1];}],
@@ -1181,10 +1210,10 @@ async function enterApp(){
   flushQueue();
   // nạp trước danh sách SO cần xuất để "Tạo loading" mở tức thì
   if(['picker','admin','manager'].indexOf(session.role)>=0){ api('getOpenSOs').then(function(r){ _sosMemo=r.items; }).catch(function(){}); }
-  go(ROLES[session.role].home);
+  var nv=navList(); var home=ROLES[session.role].home; go(nv.indexOf(home)>=0?home:(nv[0]||home));
 }
 function buildSidebar(){
-  var nav=document.getElementById('sbNav'); nav.innerHTML=''; var items=ROLES[session.role].nav; var lastGroup='';
+  var nav=document.getElementById('sbNav'); nav.innerHTML=''; var items=navList(); var lastGroup='';
   items.forEach(function(v){
     if(NAV[v].group!==lastGroup){ lastGroup=NAV[v].group; var g=document.createElement('div'); g.className='sbgroup'; g.textContent=lastGroup; nav.appendChild(g); }
     var d=document.createElement('div'); d.className='sbitem'; d.id='side_'+v;
@@ -1195,6 +1224,8 @@ function buildSidebar(){
 function toggleSidebar(open){ var sb=document.getElementById('sidebar'),bd=document.getElementById('backdrop');
   if(open){ sb.classList.add('open'); bd.classList.add('show'); } else { sb.classList.remove('open'); bd.classList.remove('show'); } }
 function go(view){
+  // chặn vào màn không được cấp quyền
+  if(session && NAV[view] && navList().indexOf(view)<0){ var nv=navList(); view=nv[0]||'inbound'; }
   currentView=view;
   [].forEach.call(document.querySelectorAll('.sbitem'),function(b){b.classList.remove('active');});
   var sb=document.getElementById('side_'+view); if(sb) sb.classList.add('active');
@@ -1214,8 +1245,8 @@ function viewInbound(m){
   '<div class="card p-5 mb-4 flex items-center justify-between" style="background:linear-gradient(135deg,#0E2148,#1B356B);color:#fff;border:none">'+
     '<div><div class="opacity-80 text-sm">Hôm nay bạn đã đóng gói</div><div class="num" style="color:#fff;font-size:42px">'+cnt+' <span class="text-lg opacity-80">cái</span></div></div>'+
     '<div style="font-size:46px">📦</div></div>'+
-  '<button class="btn btn-navy btn-lg mb-3" onclick="startInboundScan()">📷 QUÉT QR NHẬP KHO</button>'+
-  '<button class="btn btn-ghost btn-lg mb-4" onclick="openCreateLabel()">🏷️ TẠO / IN TEM QR</button>'+
+  (canEdit()?'<button class="btn btn-navy btn-lg mb-3" onclick="startInboundScan()">📷 QUÉT QR NHẬP KHO</button>'+
+  '<button class="btn btn-ghost btn-lg mb-4" onclick="openCreateLabel()">🏷️ TẠO / IN TEM QR</button>':'<div class="card p-3 mb-4 text-xs text-slate-500">🔒 Chế độ chỉ xem — không thể quét/in tem.</div>')+
   '<div class="card p-4"><div class="font-semibold mb-2 text-slate-700">Lượt nhập gần đây (máy này)</div><div id="recentIn" class="text-sm text-slate-600 space-y-1"></div></div>';
   renderRecentIn();
 }
@@ -1346,12 +1377,12 @@ var activeLoading=null, _ldMemo=null, _ldAll=[];
 function viewOutbound(m){
   m.innerHTML=
   '<div class="flex flex-wrap items-center justify-between gap-2 mb-3"><div class="sectiontitle">Danh sách Loading</div>'+
-    '<button class="btn btn-navy" onclick="openCreateLoading()">+ Tạo Loading</button></div>'+
+    (canEdit()?'<button class="btn btn-navy" onclick="openCreateLoading()">+ Tạo Loading</button>':'')+'</div>'+
   '<div class="flex flex-wrap gap-2 mb-3">'+
     '<input id="ldSearch" class="field" style="flex:1;min-width:170px" placeholder="🔍 Tìm loading / SO / xe..." oninput="renderLdFilter()">'+
     '<select id="ldFilter" class="field" style="min-width:150px" onchange="renderLdFilter()"><option value="ALL">Tất cả ngày</option></select>'+
     '<button class="btn btn-ghost" onclick="toggleAllLd(this)">Chọn tất cả</button>'+
-    '<button class="btn btn-red" onclick="deleteSelectedLoadings()">🗑 Xóa chọn</button></div>'+
+    (canEdit()?'<button class="btn btn-red" onclick="deleteSelectedLoadings()">🗑 Xóa chọn</button>':'')+'</div>'+
   '<div id="loadingList" class="space-y-2.5"></div>';
   if(_ldMemo&&_ldMemo.length){ _ldAll=_ldMemo; buildLdFilter(); renderLdFilter(); }
   else document.getElementById('loadingList').innerHTML='<div class="text-center text-slate-400 py-8">Đang tải…</div>';
@@ -1503,7 +1534,7 @@ function renderLoading(d){
   var totLineVol=0;
   var rows=d.table.map(function(t){ var done=t.scanned>=t.ordered; var ve=+t.volume_each||0; var lineVol=ve*t.ordered; totLineVol+=lineVol;
     return '<tr><td>'+t.product_name+'<div class="text-xs text-slate-400">'+t.sku_code+'</div></td>'+
-      '<td class="text-center">'+(ld.status==='done'
+      '<td class="text-center">'+((ld.status==='done'||!canEdit())
         ? '<b style="color:var(--green);font-size:16px">'+t.scanned+'/'+t.ordered+'</b>'
         : '<input type="number" min="0" max="'+t.ordered+'" value="'+t.scanned+'" onchange="setQtyManual(\''+String(t.sku_code).replace(/'/g,'')+'\',this.value)" style="width:58px;min-height:40px;text-align:center;font-weight:700;color:'+(done?'var(--green)':'var(--navy)')+'" class="field"> <span class="text-slate-400 text-sm">/ '+t.ordered+'</span>'+(t.scanned>0?' <button onclick="setQtyManual(\''+String(t.sku_code).replace(/'/g,'')+'\',0)" title="Gỡ hết lượt quét mã này" style="color:var(--red);background:none;border:none;cursor:pointer;font-weight:700">✕</button>':''))+'</td>'+
       '<td class="text-center text-slate-600">'+(ve?ve.toFixed(3):'-')+'</td>'+
@@ -1516,13 +1547,13 @@ function renderLoading(d){
     '<div class="mt-3 text-sm text-slate-600">Dự kiến theo đơn: <b style="color:var(--navy)">'+d.estimate_volume_m3+' m³</b> / '+cap+' m³ <span class="text-slate-400">· đã quét '+d.scanned_volume_m3+' m³</span></div>'+
     '<div style="background:var(--track);border-radius:999px;height:16px;margin-top:8px;overflow:hidden"><div style="height:100%;width:'+Math.min(pct,100)+'%;background:'+bc+';transition:.3s"></div></div>'+
     '<div class="text-right text-sm font-bold mt-1" style="color:'+bc+'">'+pct+'% '+(pct>100?'— QUÁ TẢI!':'(dự kiến)')+'</div></div>'+
-  (ld.status!=='done'?'<div class="flex gap-2 mb-3"><button class="btn btn-ghost flex-1" onclick="editLoading()">✏ Sửa SO/Xe</button><button class="btn btn-red flex-1" onclick="deleteLoadingNow()">🗑 Xóa</button></div>':'')+
-  (ld.status==='done'?'<div class="card p-3 mb-3" style="background:#dcfce7"><div class="text-center font-semibold mb-2" style="color:#166534">✓ Loading đã hoàn tất</div><button class="btn btn-amber w-full" onclick="reopenLoading()">🔓 Mở lại để sửa số lượng</button></div>':
-   '<button class="btn btn-navy btn-lg mb-3" onclick="startOutboundScan()">📷 QUÉT XUẤT HÀNG</button>')+
+  (canEdit()&&ld.status!=='done'?'<div class="flex gap-2 mb-3"><button class="btn btn-ghost flex-1" onclick="editLoading()">✏ Sửa SO/Xe</button><button class="btn btn-red flex-1" onclick="deleteLoadingNow()">🗑 Xóa</button></div>':'')+
+  (ld.status==='done'?'<div class="card p-3 mb-3" style="background:#dcfce7"><div class="text-center font-semibold mb-2" style="color:#166534">✓ Loading đã hoàn tất</div>'+(canEdit()?'<button class="btn btn-amber w-full" onclick="reopenLoading()">🔓 Mở lại để sửa số lượng</button>':'')+'</div>':
+   (canEdit()?'<button class="btn btn-navy btn-lg mb-3" onclick="startOutboundScan()">📷 QUÉT XUẤT HÀNG</button>':'<div class="card p-3 mb-3 text-xs text-slate-500">🔒 Chế độ chỉ xem.</div>'))+
   '<div class="card overflow-auto mb-3"><table><thead><tr><th>Sản phẩm</th><th class="text-center">Quét/Cần</th><th class="text-center">m³/cái</th><th class="text-center">m³ line</th><th class="text-center">Đủ</th></tr></thead><tbody>'+rows+
     '<tr class="soft"><td class="font-bold">Tổng thể tích (theo đơn)</td><td></td><td></td><td class="text-center font-bold" style="color:var(--navy)">'+totLineVol.toFixed(3)+'</td><td></td></tr>'+
     '</tbody></table></div>'+
-  (ld.status!=='done'?'<button class="btn '+(allDone?'btn-green':'btn-amber')+' w-full" onclick="completeLoading()">'+(allDone?'✓ HOÀN TẤT LOADING':'Hoàn tất một phần (xe đầy)')+'</button>':'');
+  (canEdit()&&ld.status!=='done'?'<button class="btn '+(allDone?'btn-green':'btn-amber')+' w-full" onclick="completeLoading()">'+(allDone?'✓ HOÀN TẤT LOADING':'Hoàn tất một phần (xe đầy)')+'</button>':'');
 }
 async function reopenLoading(){ var ld=window._curLoading; if(!ld)return;
   if(!confirm(L('Mở lại loading đã hoàn tất để sửa? Đơn hàng sẽ trở lại trạng thái đang xử lý.')))return;
@@ -1612,11 +1643,13 @@ function viewInventory(m){
   var totalStock=window._inv.reduce(function(a,r){return a+r.in_stock;},0);
   m.innerHTML=
   '<div class="grid grid-cols-3 gap-3 mb-4" id="invKpi">'+kpi('Loại SKU',window._inv.length,'var(--navy)','🏷️')+kpi('Tổng tồn',totalStock,'var(--amber)','📦')+kpi('Sắp hết', window._inv.filter(function(r){return r.in_stock<(parseInt(cache.settings.reorder_threshold||"10",10));}).length,'var(--red)','⚠️')+'</div>'+
+  (isAdmin()?
   '<div class="card p-3 mb-3"><div class="flex flex-wrap gap-2 items-end">'+
     '<div style="flex:2;min-width:170px"><label class="text-xs text-slate-500">Cộng tồn thủ công cho SKU</label><input id="adjSku" class="field" list="adjSkuList" placeholder="🔍 Gõ mã SKU..."><datalist id="adjSkuList"></datalist></div>'+
     '<div style="flex:1;min-width:90px"><label class="text-xs text-slate-500">Số lượng (+/-)</label><input id="adjQty" type="number" class="field" value="1"></div>'+
     '<button class="btn btn-green" onclick="addStockManual()">➕ Cộng tồn</button></div>'+
-    '<div class="text-xs text-slate-400 mt-2">Hoặc bấm thẳng vào ô “Tồn” trong bảng để sửa số tồn.</div></div>'+
+    '<div class="text-xs text-slate-400 mt-2">Hoặc bấm thẳng vào ô “Tồn” trong bảng để sửa số tồn.</div></div>'
+  : '<div class="card p-3 mb-3 text-xs text-slate-500">🔒 Chỉ tài khoản Admin mới được sửa tồn kho. Bạn đang ở chế độ xem.</div>')+
   '<div class="flex flex-wrap gap-2 mb-3"><input id="invSearch" class="field" style="flex:1;min-width:180px" placeholder="🔍 Tìm SKU / sản phẩm..." oninput="renderInv()">'+
     '<button class="btn btn-ghost" onclick="exportCSV(window._inv,\'tonkho.csv\')">⬇ CSV</button></div>'+
   '<div class="card overflow-auto"><table><thead><tr><th onclick="sortInv(\'name\')">Sản phẩm</th><th>Size</th><th class="text-center">UOM</th><th class="text-center" onclick="sortInv(\'in_stock\')">Tồn (sửa được)</th><th class="text-center" onclick="sortInv(\'shipped\')">Đã xuất</th><th class="text-center" onclick="sortInv(\'created\')">Đã tạo</th><th class="text-center">m³</th></tr></thead><tbody id="invBody"></tbody></table></div>';
@@ -1634,7 +1667,9 @@ function renderInv(){
   var th=parseInt(cache.settings.reorder_threshold||'10',10);
   document.getElementById('invBody').innerHTML=rows.map(function(r){ var low=r.in_stock<th;
     return '<tr><td>'+r.name+'<div class="text-xs text-slate-400">'+r.sku_code+'</div></td><td>'+r.size+'</td><td class="text-center">'+(r.unit||'ea')+'</td>'+
-      '<td class="text-center"><input type="number" min="0" value="'+r.in_stock+'" onchange="setStockManual(\''+String(r.sku_code).replace(/'/g,'')+'\',this.value)" style="width:74px;text-align:center;font-weight:700;color:'+(low?'var(--red)':'var(--navy)')+'" class="field"></td>'+
+      '<td class="text-center">'+(isAdmin()
+        ? '<input type="number" min="0" value="'+r.in_stock+'" onchange="setStockManual(\''+String(r.sku_code).replace(/'/g,'')+'\',this.value)" style="width:74px;text-align:center;font-weight:700;color:'+(low?'var(--red)':'var(--navy)')+'" class="field">'
+        : '<b style="color:'+(low?'var(--red)':'var(--navy)')+'">'+r.in_stock+'</b>')+'</td>'+
       '<td class="text-center">'+r.shipped+'</td><td class="text-center">'+r.created+'</td><td class="text-center text-slate-500">'+(r.vol||'-')+'</td></tr>';
   }).join('')||'<tr><td colspan="7" class="text-center text-slate-400 py-8">Không có dữ liệu</td></tr>';
 }
@@ -1705,7 +1740,7 @@ function openProductEdit(i){
     '<div class="grid grid-cols-4 gap-2 mt-2">'+f('pe_l','Dài (inch)',s.length)+f('pe_w','Rộng',s.width)+f('pe_h','Cao',s.height)+f('pe_thr','Ngưỡng tồn',s.reorder_threshold)+'</div>'+
     '<div class="mt-2">'+f('pe_img','URL ảnh (tùy chọn)',s.image_url)+'</div>'+
     '<label class="flex items-center gap-2 mt-3 text-sm"><input type="checkbox" id="pe_active" '+(String(s.active)==='false'?'':'checked')+' style="width:18px;height:18px;accent-color:var(--navy)"> Đang hoạt động (bỏ tick = vô hiệu hóa SKU)</label>'+
-    '<button class="btn btn-navy w-full mt-3" onclick="saveProduct()">💾 Lưu thay đổi</button><div id="peMsg" class="text-center text-sm mt-2"></div>'+
+    (canEdit()?'<button class="btn btn-navy w-full mt-3" onclick="saveProduct()">💾 Lưu thay đổi</button>':'<div class="text-xs text-slate-500 mt-3">🔒 Chế độ chỉ xem.</div>')+'<div id="peMsg" class="text-center text-sm mt-2"></div>'+
   '</div>';
 }
 async function saveProduct(){
@@ -1723,7 +1758,7 @@ var _ordersAll=[];
 async function viewOrders(m){
   m.innerHTML=
   '<div class="flex items-center justify-between gap-2 mb-3"><div class="sectiontitle">Đơn hàng (Sales Order)</div>'+
-    '<button class="btn btn-navy" onclick="openCreateOrder()">➕ Tạo đơn</button></div>'+
+    (canEdit()?'<button class="btn btn-navy" onclick="openCreateOrder()">➕ Tạo đơn</button>':'')+'</div>'+
   '<div class="card p-4 mb-3">'+
     '<div class="grid grid-cols-2 md:grid-cols-4 gap-2 mb-2">'+
       '<input id="ordSearch" class="field" placeholder="🔍 SO / khách" oninput="renderOrders()">'+
@@ -1735,7 +1770,7 @@ async function viewOrders(m){
       '<div><label class="text-xs text-slate-500">Giao từ</label><input id="ordFrom" type="date" class="field" onchange="renderOrders()"></div>'+
       '<div><label class="text-xs text-slate-500">Giao đến</label><input id="ordTo" type="date" class="field" onchange="renderOrders()"></div>'+
       '<button class="btn btn-ghost" style="align-self:end" onclick="toggleAllOrd(this)">Chọn tất cả</button>'+
-      '<button class="btn btn-red" style="align-self:end" onclick="deleteSelectedOrders()">🗑 Xóa chọn</button>'+
+      (canEdit()?'<button class="btn btn-red" style="align-self:end" onclick="deleteSelectedOrders()">🗑 Xóa chọn</button>':'')+
     '</div><div id="ordSummary" class="text-sm text-slate-500 mt-2"></div></div>'+
   '<div id="ordList" class="space-y-2"></div>';
   document.getElementById('ordList').innerHTML='<div class="text-center text-slate-400 py-8">Đang tải…</div>';
@@ -2281,15 +2316,41 @@ function adminVehicle(){
 function renderVeh(){ document.getElementById('vehList').innerHTML=cache.vehicles.map(function(v){return '<div class="flex justify-between items-center py-2" style="border-bottom:1px solid var(--line)"><div class="font-medium">'+v.vehicle_name+' <span class="text-slate-400 text-sm">'+(v.plate_no||'')+'</span></div><b>'+v.capacity_m3+' m³</b></div>';}).join('')||'<div class="text-slate-400 text-center py-3">Chưa có xe</div>'; }
 async function saveVehicle(){ try{ await api('saveVehicle',{vehicle_name:document.getElementById('vh_name').value,plate_no:document.getElementById('vh_plate').value,capacity_m3:document.getElementById('vh_cap').value}); await refreshCache(); renderVeh(); document.getElementById('vh_name').value=''; document.getElementById('vh_cap').value=''; }catch(e){ alert(L(e.message)); } }
 function adminUser(){
+  var scr=ROLES.admin.nav; // tất cả màn hình
   document.getElementById('adminBody').innerHTML=
   '<div class="card p-5 mb-3"><div class="font-semibold mb-3 text-slate-700">Thêm / Sửa user</div>'+
     '<input id="us_name" class="field mb-2" placeholder="username"><input id="us_pin" class="field mb-2" placeholder="PIN (để trống nếu không đổi)">'+
-    '<select id="us_role" class="field mb-3"><option value="packer">Đóng gói</option><option value="picker">Thủ kho</option><option value="manager">Quản lý</option><option value="admin">Admin</option></select>'+
-    '<button class="btn btn-navy w-full" onclick="saveUser()">Lưu user</button></div>'+
-  '<div class="card p-4"><div id="userList"></div></div>'; loadUsers();
+    '<label class="text-xs text-slate-500">Vai trò</label>'+
+    '<select id="us_role" class="field mb-3" onchange="usRoleChanged()"><option value="packer">Đóng gói</option><option value="picker">Thủ kho</option><option value="manager">Quản lý</option><option value="admin">Admin (toàn quyền)</option></select>'+
+    '<div id="us_perm">'+
+      '<label class="text-xs text-slate-500">Màn hình được xem (phân quyền)</label>'+
+      '<div class="grid grid-cols-2 gap-2 my-2">'+scr.map(function(v){return '<label class="flex items-center gap-2 text-sm"><input type="checkbox" class="us-scr" value="'+v+'" style="width:16px;height:16px;accent-color:var(--navy)"> '+NAV[v].icon+' '+NAV[v].label+'</label>';}).join('')+'</div>'+
+      '<label class="flex items-center gap-2 text-sm mt-1"><input type="checkbox" id="us_edit" style="width:18px;height:18px;accent-color:var(--green)"> Cho phép chỉnh sửa (bỏ tick = chỉ xem)</label>'+
+      '<div class="text-xs text-slate-400 mt-1">Lưu ý: sửa tồn kho chỉ tài khoản Admin mới được.</div>'+
+    '</div>'+
+    '<button class="btn btn-navy w-full mt-3" onclick="saveUser()">Lưu user</button><div id="usMsg" class="text-center text-sm mt-2"></div></div>'+
+  '<div class="card p-4"><div class="font-semibold mb-2 text-slate-700">Danh sách user <span class="text-xs text-slate-400">(bấm để sửa)</span></div><div id="userList"></div></div>';
+  usRoleChanged(); loadUsers();
 }
-async function loadUsers(){ try{ var u=(await api('getUsers')).items; document.getElementById('userList').innerHTML=u.map(function(x){return '<div class="flex justify-between items-center py-2" style="border-bottom:1px solid var(--line)"><div class="font-medium">'+x.username+' <span class="pill" style="background:#eef;color:var(--navy)">'+x.role+'</span></div><span class="text-sm '+(String(x.active)==='false'?'text-red-500':'text-green-600')+'">'+(String(x.active)==='false'?'khóa':'hoạt động')+'</span></div>';}).join(''); }catch(e){ document.getElementById('userList').innerHTML=e.message; } }
-async function saveUser(){ try{ await api('saveUser',{username:document.getElementById('us_name').value,pin:document.getElementById('us_pin').value,role:document.getElementById('us_role').value}); loadUsers(); document.getElementById('us_name').value=''; document.getElementById('us_pin').value=''; }catch(e){ alert(L(e.message)); } }
+function usRoleChanged(){ var r=(document.getElementById('us_role')||{}).value; var p=document.getElementById('us_perm'); if(p) p.style.opacity=(r==='admin')?'.45':'1'; }
+async function loadUsers(){ try{ var d=await api('getUsers'); window._uperms=d.perms||{}; var u=d.items;
+  document.getElementById('userList').innerHTML=u.map(function(x){ var pm=(window._uperms||{})[x.username]||{}; var scrTxt=(x.role==='admin')?'tất cả màn': ((pm.screens&&pm.screens.length)?(pm.screens.length+' màn'):'mặc định vai trò'); var ed=(x.role==='admin'||pm.edit!==false)?'sửa':'chỉ xem';
+    return '<div class="flex justify-between items-center py-2 cursor-pointer" style="border-bottom:1px solid var(--line)" onclick=\'fillUser('+JSON.stringify(JSON.stringify(x))+')\'><div><div class="font-medium">'+x.username+' <span class="pill" style="background:#eef;color:var(--navy)">'+x.role+'</span></div><div class="text-xs text-slate-400">'+scrTxt+' · '+ed+'</div></div><span class="text-sm '+(String(x.active)==='false'?'text-red-500':'text-green-600')+'">'+(String(x.active)==='false'?'khóa':'hoạt động')+'</span></div>';
+  }).join('')||'<div class="text-slate-400 text-center py-3">Chưa có user</div>'; }catch(e){ document.getElementById('userList').innerHTML=e.message; } }
+function fillUser(js){ var x=JSON.parse(js); var pm=(window._uperms||{})[x.username]||{};
+  document.getElementById('us_name').value=x.username; document.getElementById('us_role').value=x.role; document.getElementById('us_pin').value='';
+  var scrs=(pm.screens||[]); [].forEach.call(document.querySelectorAll('.us-scr'),function(c){ c.checked=scrs.indexOf(c.value)>=0; });
+  document.getElementById('us_edit').checked=(pm.edit!==false); usRoleChanged(); window.scrollTo(0,0);
+}
+async function saveUser(){ var g=function(id){return (document.getElementById(id)||{}).value;};
+  var screens=[].map.call(document.querySelectorAll('.us-scr:checked'),function(c){return c.value;});
+  var canEd=(document.getElementById('us_edit')||{}).checked;
+  if(!g('us_name').trim()){ var m0=document.getElementById('usMsg'); if(m0){m0.style.color='var(--red)';m0.textContent='Nhập username';} return; }
+  try{ await api('saveUser',{username:g('us_name').trim(),pin:g('us_pin'),role:g('us_role'),screens:screens,can_edit:canEd});
+    var m=document.getElementById('usMsg'); if(m){m.style.color='var(--green)';m.textContent='Đã lưu ✓';}
+    document.getElementById('us_name').value=''; document.getElementById('us_pin').value=''; loadUsers();
+  }catch(e){ var m=document.getElementById('usMsg'); if(m){m.style.color='var(--red)';m.textContent=e.message;} }
+}
 function adminImport(){
   document.getElementById('adminBody').innerHTML=
   '<div class="card p-5"><div class="font-semibold mb-1 text-slate-700">Import Sales Order từ CSV</div>'+
