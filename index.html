@@ -1010,7 +1010,7 @@ var I18N_PAIRS = [
   ['MẤT KẾT NỐI','CONNECTION LOST'],['Khâu xuất cần mạng. Vui lòng kết nối lại.','Outbound needs internet. Please reconnect.'],
   ['ĐÃ HIỂU — TIẾP TỤC','GOT IT — CONTINUE'],['SO123','SO123'],
   /* Đóng gói / Inbound */
-  ['Quét QR — Nhập kho','Scan QR — Inbound'],['✓ ĐÃ GHI','✓ RECORDED'],['✓ ĐÃ GHI +1','✓ RECORDED +1'],['Chọn SKU','Select SKU'],
+  ['Quét QR — Nhập kho','Scan QR — Inbound'],['✓ ĐÃ GHI','✓ RECORDED'],['✓ ĐÃ GHI +1','✓ RECORDED +1'],['✓ ĐÃ XUẤT +1','✓ SHIPPED +1'],['Chọn SKU','Select SKU'],
   ['Hôm nay bạn đã đóng gói','You packed today'],['📷 QUÉT QR NHẬP KHO','📷 SCAN QR INBOUND'],
   ['Lượt nhập gần đây (máy này)','Recent inbound (this device)'],
   ['+ Tạo Loading','+ New loading'],['+ Tạo đơn','+ New order'],
@@ -1036,6 +1036,7 @@ var I18N_PAIRS = [
   ['Admin (toàn quyền)','Admin (full access)'],['Danh sách user','User list'],['Nhập username','Enter username'],
   ['Chỉ tài khoản Admin mới được sửa tồn kho','Only Admin can edit stock'],
   ['tất cả màn','all screens'],['mặc định vai trò','role default'],['sửa','edit'],['chỉ xem','view only'],['Chưa có user','No users'],
+  ['Lưu tồn','Save stock'],['✓ ĐÃ LƯU TỒN','✓ STOCK SAVED'],['Tồn không đổi','Stock unchanged'],
   ['Chọn SKU để xem trước','Select a SKU to preview'],['Xem trước tem (đúng như khi in)','Label preview (as printed)'],
   ['Khổ tem mặc định','Default label size'],['Dòng chữ thêm (tùy chọn)','Extra text (optional)'],
   ['⬇ Tải file mẫu (template) CSV','⬇ Download template CSV'],['⚠ CHƯA LƯU ĐƯỢC','⚠ NOT SAVED'],
@@ -1192,7 +1193,7 @@ function doLogin(){
   var username=document.getElementById('loginUser').value.trim(), pin=document.getElementById('loginPin').value.trim();
   if(!username||!pin){ msg.textContent='Nhập tài khoản và PIN'; return; }
   api('login',{username:username,pin:pin,role:selectedRole}).then(function(d){
-    session={username:d.username,role:d.role,token:d.token}; localStorage.setItem(CONFIG.sessionKey,JSON.stringify(session)); enterApp();
+    session={username:d.username,role:d.role,token:d.token,screens:d.screens||null,can_edit:(d.can_edit!==false)}; localStorage.setItem(CONFIG.sessionKey,JSON.stringify(session)); enterApp();
   }).catch(function(e){ msg.textContent=e.message; beep(false); });
 }
 function logout(){ localStorage.removeItem(CONFIG.sessionKey); session=null; document.getElementById('loginPin').value=''; show('screenLogin'); }
@@ -1588,7 +1589,7 @@ function handleOutbound(code){
   row.scanned++; cand[0].scanned++; if(window._lmStock) window._lmStock[sku]=stock-1;
   d.scanned_volume_m3=round3((+d.scanned_volume_m3||0)+(+row.volume_each||0));
   d.fill_percent=d.capacity_m3?Math.round(d.scanned_volume_m3/(+d.capacity_m3)*100):0;
-  flashAlert('good','✓ OK',(sk.product_name||sku)+'\nSO '+soNum+' · '+row.scanned+'/'+row.ordered+' · '+d.fill_percent+'% xe', true);
+  flashAlert('good','✓ ĐÃ XUẤT +1',(sk.product_name||sku)+'\nSO '+soNum+' · '+row.scanned+'/'+row.ordered+' · '+d.fill_percent+'% xe', false, 'OK ✓ — QUÉT TẤM TIẾP');
   renderLoading(d);
   // ghi máy chủ ở nền
   api('outboundScan',{loading_id:activeLoading, sku_code:sku, so_number:soNum}).then(function(res){
@@ -1665,14 +1666,15 @@ function renderInv(){
   var rows=(window._inv||[]).filter(function(r){return (r.sku_code+' '+r.name).toLowerCase().indexOf(q)>=0;});
   rows.sort(function(a,b){ var x=a[_invSort.k],y=b[_invSort.k]; if(typeof x==='string')return _invSort.dir*x.localeCompare(y); return _invSort.dir*(x-y); });
   var th=parseInt(cache.settings.reorder_threshold||'10',10);
-  document.getElementById('invBody').innerHTML=rows.map(function(r){ var low=r.in_stock<th;
+  document.getElementById('invBody').innerHTML=rows.map(function(r,idx){ var low=r.in_stock<th; var sk=String(r.sku_code).replace(/'/g,'');
     return '<tr><td>'+r.name+'<div class="text-xs text-slate-400">'+r.sku_code+'</div></td><td>'+r.size+'</td><td class="text-center">'+(r.unit||'ea')+'</td>'+
       '<td class="text-center">'+(isAdmin()
-        ? '<input type="number" min="0" value="'+r.in_stock+'" onchange="setStockManual(\''+String(r.sku_code).replace(/'/g,'')+'\',this.value)" style="width:74px;text-align:center;font-weight:700;color:'+(low?'var(--red)':'var(--navy)')+'" class="field">'
+        ? '<div style="display:inline-flex;gap:6px;align-items:center"><input id="invStk'+idx+'" type="number" min="0" value="'+r.in_stock+'" style="width:70px;text-align:center;font-weight:700;color:'+(low?'var(--red)':'var(--navy)')+'" class="field"><button class="btn btn-navy" style="min-height:36px;padding:0 10px" title="Lưu tồn" onclick="saveStockRow('+idx+',\''+sk+'\')">💾</button></div>'
         : '<b style="color:'+(low?'var(--red)':'var(--navy)')+'">'+r.in_stock+'</b>')+'</td>'+
       '<td class="text-center">'+r.shipped+'</td><td class="text-center">'+r.created+'</td><td class="text-center text-slate-500">'+(r.vol||'-')+'</td></tr>';
   }).join('')||'<tr><td colspan="7" class="text-center text-slate-400 py-8">Không có dữ liệu</td></tr>';
 }
+function saveStockRow(idx, sku){ var el=document.getElementById('invStk'+idx); if(!el)return; setStockManual(sku, el.value); }
 function updateInvKpi(){ var el=document.getElementById('invKpi'); if(!el)return; var ts=window._inv.reduce(function(a,r){return a+r.in_stock;},0); el.innerHTML=kpi('Loại SKU',window._inv.length,'var(--navy)','🏷️')+kpi('Tổng tồn',ts,'var(--amber)','📦')+kpi('Sắp hết', window._inv.filter(function(r){return r.in_stock<(parseInt(cache.settings.reorder_threshold||"10",10));}).length,'var(--red)','⚠️'); }
 async function addStockManual(){
   var sku=(document.getElementById('adjSku')||{}).value; var qty=parseInt((document.getElementById('adjQty')||{}).value,10);
@@ -1685,8 +1687,10 @@ async function addStockManual(){
 async function setStockManual(sku,v){
   v=parseInt(v,10); if(isNaN(v))return;
   var row=(window._inv||[]).filter(function(x){return x.sku_code===sku;})[0]; var cur=row?row.in_stock:0; var delta=v-cur;
-  if(delta===0) return;
-  try{ var r=await api('adjustStock',{sku_code:sku,delta:delta}); if(row)row.in_stock=r.qty; updateInvKpi(); api('getInventory').then(function(rr){cache.inventory=rr.items;}).catch(function(){}); }
+  if(delta===0){ flashAlert('warn','Tồn không đổi', sku, true); return; }
+  try{ var r=await api('adjustStock',{sku_code:sku,delta:delta}); if(row)row.in_stock=r.qty; updateInvKpi(); renderInv();
+    flashAlert('good','✓ ĐÃ LƯU TỒN', sku+'\nTồn mới: '+r.qty, true);
+    api('getInventory').then(function(rr){cache.inventory=rr.items;}).catch(function(){}); }
   catch(e){ alert(L(e.message)); }
 }
 
