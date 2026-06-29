@@ -1665,16 +1665,17 @@ function renderInv(){
   var q=(document.getElementById('invSearch').value||'').toLowerCase();
   var rows=(window._inv||[]).filter(function(r){return (r.sku_code+' '+r.name).toLowerCase().indexOf(q)>=0;});
   rows.sort(function(a,b){ var x=a[_invSort.k],y=b[_invSort.k]; if(typeof x==='string')return _invSort.dir*x.localeCompare(y); return _invSort.dir*(x-y); });
+  window._invRows=rows;   // lưu mảng đang hiển thị -> lấy sku theo INDEX (tránh lỗi dấu " trong mã)
   var th=parseInt(cache.settings.reorder_threshold||'10',10);
-  document.getElementById('invBody').innerHTML=rows.map(function(r,idx){ var low=r.in_stock<th; var sk=String(r.sku_code).replace(/'/g,'');
+  document.getElementById('invBody').innerHTML=rows.map(function(r,idx){ var low=r.in_stock<th;
     return '<tr><td>'+r.name+'<div class="text-xs text-slate-400">'+r.sku_code+'</div></td><td>'+r.size+'</td><td class="text-center">'+(r.unit||'ea')+'</td>'+
       '<td class="text-center">'+(isAdmin()
-        ? '<div style="display:inline-flex;gap:6px;align-items:center"><input id="invStk'+idx+'" type="number" min="0" value="'+r.in_stock+'" style="width:70px;text-align:center;font-weight:700;color:'+(low?'var(--red)':'var(--navy)')+'" class="field"><button class="btn btn-navy" style="min-height:36px;padding:0 10px" title="Lưu tồn" onclick="saveStockRow('+idx+',\''+sk+'\')">💾</button></div>'
+        ? '<div style="display:inline-flex;gap:6px;align-items:center"><input id="invStk'+idx+'" type="number" min="0" value="'+r.in_stock+'" style="width:70px;text-align:center;font-weight:700;color:'+(low?'var(--red)':'var(--navy)')+'" class="field"><button class="btn btn-navy" style="min-height:36px;padding:0 10px" title="Lưu tồn" onclick="saveStockRow('+idx+')">💾</button></div>'
         : '<b style="color:'+(low?'var(--red)':'var(--navy)')+'">'+r.in_stock+'</b>')+'</td>'+
       '<td class="text-center">'+r.shipped+'</td><td class="text-center">'+r.created+'</td><td class="text-center text-slate-500">'+(r.vol||'-')+'</td></tr>';
   }).join('')||'<tr><td colspan="7" class="text-center text-slate-400 py-8">Không có dữ liệu</td></tr>';
 }
-function saveStockRow(idx, sku){ var el=document.getElementById('invStk'+idx); if(!el)return; setStockManual(sku, el.value); }
+function saveStockRow(idx){ var r=(window._invRows||[])[idx]; if(!r)return; var el=document.getElementById('invStk'+idx); if(!el)return; setStockManual(r.sku_code, el.value); }
 function updateInvKpi(){ var el=document.getElementById('invKpi'); if(!el)return; var ts=window._inv.reduce(function(a,r){return a+r.in_stock;},0); el.innerHTML=kpi('Loại SKU',window._inv.length,'var(--navy)','🏷️')+kpi('Tổng tồn',ts,'var(--amber)','📦')+kpi('Sắp hết', window._inv.filter(function(r){return r.in_stock<(parseInt(cache.settings.reorder_threshold||"10",10));}).length,'var(--red)','⚠️'); }
 async function addStockManual(){
   var sku=(document.getElementById('adjSku')||{}).value; var qty=parseInt((document.getElementById('adjQty')||{}).value,10);
