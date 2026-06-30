@@ -813,7 +813,15 @@ async function api(action, p){
     case 'getInvOngoing': {
       var fbR=await pageAll(function(a,b){return sb.from('fishbowl_inventory').select('*').range(a,b);});
       var ogR=await pageAll(function(a,b){return sb.from('ongoing_incoming').select('*').range(a,b);});
-      return { fishbowl:fbR, ongoing:ogR };
+      var scR=[]; try{ scR=await pageAll(function(a,b){return sb.from('stock_check').select('*').range(a,b);}); }catch(e){}
+      return { fishbowl:fbR, ongoing:ogR, checks:scR };
+    }
+    case 'setStockCheck': {
+      if(!canEdit()) throw new Error('Bạn không có quyền chỉnh');
+      var pn=String(p.part_number).trim(); if(!pn) throw new Error('Thiếu part_number');
+      if(p.qty===''||p.qty===null||p.qty===undefined){ chk(await sb.from('stock_check').delete().eq('part_number',pn)); return {ok:true,cleared:true}; }
+      chk(await sb.from('stock_check').upsert({part_number:pn,check_qty:(parseFloat(p.qty)||0),checked_by:session.username,checked_at:new Date().toISOString()}));
+      await audit(session.username,'stock_check',pn+' = '+p.qty); return {ok:true};
     }
     case 'getOrders': {
       var rows=await pageAll(function(a,b){return sb.from('sales_orders').select('so_number,customer,status,state,sales_person,so_class,location_group,so_date,delivery_date,total_amount').order('so_number',{ascending:false}).range(a,b);});
@@ -899,7 +907,8 @@ var I18N_PAIRS = [
   ['Ongoing — Tồn Fishbowl & Hàng đang về','Ongoing — Fishbowl stock & Incoming'],
   ['Tổng tồn Fishbowl','Total Fishbowl stock'],['Tổng đang về','Total incoming'],['Part đang về','Parts incoming'],
   ['Chỉ part đang về','Only incoming parts'],['Tồn Fishbowl','Fishbowl stock'],['Đang về','Incoming'],
-  ['ETA gần nhất','Nearest ETA'],['Sản phẩm (Part)','Product (Part)'],['Tìm part / tên...','Search part / name...'],
+  ['ETA gần nhất','Nearest ETA'],['ETA (container)','ETA (container)'],['Sản phẩm (Part)','Product (Part)'],['Tìm part / tên...','Search part / name...'],
+  ['Check stock','Check stock'],['Chênh lệch','Diff'],['Chỉ part lệch','Only mismatched parts'],
   ['Fishbowl/Ongoing','Fishbowl/Ongoing'],['Import Fishbowl + Ongoing','Import Fishbowl + Ongoing'],
   ['Chưa có dữ liệu — import ở Quản trị → Fishbowl/Ongoing','No data — import at Admin → Fishbowl/Ongoing'],
   /* Đăng nhập / cấu hình */
@@ -1729,14 +1738,20 @@ function viewOngoing(m){
   api('getInvOngoing').then(function(d){ if(currentView==='ongoing') renderOngoing(d); })
     .catch(function(e){ var w=document.getElementById('ongWrap'); if(w) w.innerHTML='<div class="card p-4">'+L(e.message)+'</div>'; });
 }
+function ongDiffHTML(r){
+  if(r.check===''||r.check===null||r.check===undefined) return '<span class="text-slate-400">-</span>';
+  var dff=(+r.check||0)-(+r.on_hand||0); var col=dff===0?'var(--green)':(dff>0?'var(--navy)':'var(--red)');
+  return '<b style="color:'+col+'">'+(dff>0?'+':'')+dff+'</b>';
+}
 function renderOngoing(d){
-  var fb=d.fishbowl||[], og=d.ongoing||[];
+  var fb=d.fishbowl||[], og=d.ongoing||[], cks=d.checks||[];
   var fbMap={}; fb.forEach(function(r){ fbMap[r.part_number]={on:+r.qty_on_hand||0,uom:r.uom,desc:r.description}; });
   var ogMap={}; og.forEach(function(r){ ogMap[r.link_forecast]={inc:+r.qty_incoming||0,eta:r.next_eta,lines:r.po_lines,details:(r.details||[])}; });
+  var ckMap={}; cks.forEach(function(r){ ckMap[r.part_number]=(r.check_qty==null?'':+r.check_qty); });
   var skuMap={}; (cache.skus||[]).forEach(function(s){skuMap[s.sku_code]=s;});
-  var keys={}; Object.keys(fbMap).forEach(function(k){keys[k]=1;}); Object.keys(ogMap).forEach(function(k){keys[k]=1;});
+  var keys={}; Object.keys(fbMap).forEach(function(k){keys[k]=1;}); Object.keys(ogMap).forEach(function(k){keys[k]=1;}); Object.keys(ckMap).forEach(function(k){keys[k]=1;});
   window._ongAll=Object.keys(keys).map(function(k){ var f=fbMap[k]||{}, o=ogMap[k]||{}, s=skuMap[k]||{}; var det=o.details||[];
-    return {part:k, name:(s.product_name||f.desc||k), on_hand:f.on||0, incoming:o.inc||0, eta:o.eta||'', lines:o.lines||0, total:(f.on||0)+(o.inc||0), details:det, eta_list:det.map(function(x){return (x.cont||'')+' ('+(x.qty||0)+') ETA:'+(x.eta||'-');}).join(' | ')}; });
+    return {part:k, name:(s.product_name||f.desc||k), on_hand:f.on||0, check:(ckMap[k]===undefined?'':ckMap[k]), incoming:o.inc||0, eta:o.eta||'', lines:o.lines||0, total:(f.on||0)+(o.inc||0), details:det, eta_list:det.map(function(x){return (x.cont||'')+' ('+(x.qty||0)+') ETA:'+(x.eta||'-');}).join(' | ')}; });
   var totOn=window._ongAll.reduce(function(a,r){return a+r.on_hand;},0);
   var totInc=window._ongAll.reduce(function(a,r){return a+r.incoming;},0);
   var nInc=window._ongAll.filter(function(r){return r.incoming>0;}).length;
@@ -1744,24 +1759,39 @@ function renderOngoing(d){
   '<div class="grid grid-cols-3 gap-3 mb-4">'+kpi('Tổng tồn Fishbowl',Math.round(totOn),'var(--navy)','📦')+kpi('Tổng đang về',Math.round(totInc),'var(--green)','🚛')+kpi('Part đang về',nInc,'var(--amber)','⏳')+'</div>'+
   '<div class="flex flex-wrap gap-2 mb-3 items-center"><input id="ongSearch" class="field" style="flex:1;min-width:180px" placeholder="🔍 Tìm part / tên..." oninput="_ongRender&&_ongRender()">'+
     '<label class="flex items-center gap-2 text-sm"><input type="checkbox" id="ongOnly" onchange="_ongRender&&_ongRender()" style="width:18px;height:18px;accent-color:var(--navy)"> Chỉ part đang về</label>'+
-    '<button class="btn btn-ghost" onclick="exportCSV(window._ongAll.map(function(r){return {part:r.part,name:r.name,on_hand:r.on_hand,incoming:r.incoming,total:r.total,eta_list:r.eta_list};}),\'ongoing.csv\')">⬇ CSV</button>'+
+    '<label class="flex items-center gap-2 text-sm"><input type="checkbox" id="ongDiffOnly" onchange="_ongRender&&_ongRender()" style="width:18px;height:18px;accent-color:var(--red)"> Chỉ part lệch</label>'+
+    '<button class="btn btn-ghost" onclick="exportCSV(window._ongAll.map(function(r){return {part:r.part,name:r.name,fishbowl:r.on_hand,check_stock:r.check,diff:(r.check===\'\'?\'\':(+r.check)-(+r.on_hand)),incoming:r.incoming,total:r.total,eta_list:r.eta_list};}),\'ongoing.csv\')">⬇ CSV</button>'+
     '<span class="text-sm text-slate-500">(<span id="ongCount">0</span> dòng)</span></div>'+
-  '<div class="card overflow-auto"><table><thead><tr><th>Sản phẩm (Part)</th><th class="text-center">Tồn Fishbowl</th><th class="text-center">Đang về</th><th class="text-center">Tổng</th><th>ETA (container)</th></tr></thead><tbody id="ongBodyT"></tbody></table></div>';
+  '<div class="card overflow-auto"><table><thead><tr><th>Sản phẩm (Part)</th><th class="text-center">Tồn Fishbowl</th><th class="text-center">Check stock</th><th class="text-center">Chênh lệch</th><th class="text-center">Đang về</th><th class="text-center">Tổng</th><th>ETA (container)</th></tr></thead><tbody id="ongBodyT"></tbody></table></div>';
   window._ongRender=function(){
     var q=((document.getElementById('ongSearch')||{}).value||'').toLowerCase();
     var onlyInc=!!(document.getElementById('ongOnly')||{}).checked;
-    var rows=(window._ongAll||[]).filter(function(r){ if(onlyInc && r.incoming<=0) return false; return (r.part+' '+r.name).toLowerCase().indexOf(q)>=0; });
+    var diffOnly=!!(document.getElementById('ongDiffOnly')||{}).checked;
+    var rows=(window._ongAll||[]).filter(function(r){ if(onlyInc && r.incoming<=0) return false; if(diffOnly && (r.check===''||(+r.check)===(+r.on_hand))) return false; return (r.part+' '+r.name).toLowerCase().indexOf(q)>=0; });
     rows.sort(function(a,b){ return (b.incoming-a.incoming) || (b.on_hand-a.on_hand); });
-    document.getElementById('ongBodyT').innerHTML=rows.slice(0,2000).map(function(r){
+    window._ongShown=rows.slice(0,2000);
+    document.getElementById('ongBodyT').innerHTML=window._ongShown.map(function(r,idx){
       return '<tr><td>'+r.name+'<div class="text-xs text-slate-400">'+r.part+'</div></td>'+
         '<td class="text-center"><b style="color:var(--navy)">'+r.on_hand+'</b></td>'+
+        '<td class="text-center">'+(canEdit()
+          ? '<input id="ongChk'+idx+'" type="number" value="'+(r.check===''?'':r.check)+'" onchange="saveOngCheck('+idx+')" style="width:74px;text-align:center;font-weight:700" class="field" placeholder="—">'
+          : (r.check===''?'<span class="text-slate-400">—</span>':'<b>'+r.check+'</b>'))+'</td>'+
+        '<td class="text-center" id="ongDiff'+idx+'">'+ongDiffHTML(r)+'</td>'+
         '<td class="text-center"><b style="color:var(--green)">'+(r.incoming||0)+'</b></td>'+
         '<td class="text-center font-semibold">'+r.total+'</td>'+
         '<td>'+((r.details&&r.details.length)? r.details.map(function(x){return '<span class="pill" style="background:var(--soft);color:var(--ink);margin:2px 2px;display:inline-block;white-space:nowrap">'+(x.cont||'')+' ('+(x.qty||0)+') ETA: '+(x.eta||'-')+'</span>';}).join(' ') : '<span class="text-slate-400">-</span>')+'</td></tr>';
-    }).join('')||'<tr><td colspan="5" class="text-center text-slate-400 py-6">Chưa có dữ liệu — import ở Quản trị → Fishbowl/Ongoing</td></tr>';
+    }).join('')||'<tr><td colspan="7" class="text-center text-slate-400 py-6">Chưa có dữ liệu — import ở Quản trị → Fishbowl/Ongoing</td></tr>';
     var c=document.getElementById('ongCount'); if(c) c.textContent=rows.length;
   };
   window._ongRender();
+}
+async function saveOngCheck(idx){
+  var r=(window._ongShown||[])[idx]; if(!r)return; var el=document.getElementById('ongChk'+idx); if(!el)return;
+  var v=(el.value===''?'':(parseFloat(el.value)));
+  r.check=(v===''||isNaN(v))?'':v;
+  var dc=document.getElementById('ongDiff'+idx); if(dc) dc.innerHTML=ongDiffHTML(r);
+  try{ await api('setStockCheck',{part_number:r.part, qty:(r.check===''?'':r.check)}); }
+  catch(e){ alert(L(e.message)); }
 }
 function viewProducts(m){
   function render(){
