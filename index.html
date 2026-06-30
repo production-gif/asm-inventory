@@ -1732,11 +1732,11 @@ function viewOngoing(m){
 function renderOngoing(d){
   var fb=d.fishbowl||[], og=d.ongoing||[];
   var fbMap={}; fb.forEach(function(r){ fbMap[r.part_number]={on:+r.qty_on_hand||0,uom:r.uom,desc:r.description}; });
-  var ogMap={}; og.forEach(function(r){ ogMap[r.link_forecast]={inc:+r.qty_incoming||0,eta:r.next_eta,lines:r.po_lines}; });
+  var ogMap={}; og.forEach(function(r){ ogMap[r.link_forecast]={inc:+r.qty_incoming||0,eta:r.next_eta,lines:r.po_lines,details:(r.details||[])}; });
   var skuMap={}; (cache.skus||[]).forEach(function(s){skuMap[s.sku_code]=s;});
   var keys={}; Object.keys(fbMap).forEach(function(k){keys[k]=1;}); Object.keys(ogMap).forEach(function(k){keys[k]=1;});
-  window._ongAll=Object.keys(keys).map(function(k){ var f=fbMap[k]||{}, o=ogMap[k]||{}, s=skuMap[k]||{};
-    return {part:k, name:(s.product_name||f.desc||k), on_hand:f.on||0, incoming:o.inc||0, eta:o.eta||'', lines:o.lines||0, total:(f.on||0)+(o.inc||0)}; });
+  window._ongAll=Object.keys(keys).map(function(k){ var f=fbMap[k]||{}, o=ogMap[k]||{}, s=skuMap[k]||{}; var det=o.details||[];
+    return {part:k, name:(s.product_name||f.desc||k), on_hand:f.on||0, incoming:o.inc||0, eta:o.eta||'', lines:o.lines||0, total:(f.on||0)+(o.inc||0), details:det, eta_list:det.map(function(x){return (x.cont||'')+' ('+(x.qty||0)+') ETA:'+(x.eta||'-');}).join(' | ')}; });
   var totOn=window._ongAll.reduce(function(a,r){return a+r.on_hand;},0);
   var totInc=window._ongAll.reduce(function(a,r){return a+r.incoming;},0);
   var nInc=window._ongAll.filter(function(r){return r.incoming>0;}).length;
@@ -1744,9 +1744,9 @@ function renderOngoing(d){
   '<div class="grid grid-cols-3 gap-3 mb-4">'+kpi('Tổng tồn Fishbowl',Math.round(totOn),'var(--navy)','📦')+kpi('Tổng đang về',Math.round(totInc),'var(--green)','🚛')+kpi('Part đang về',nInc,'var(--amber)','⏳')+'</div>'+
   '<div class="flex flex-wrap gap-2 mb-3 items-center"><input id="ongSearch" class="field" style="flex:1;min-width:180px" placeholder="🔍 Tìm part / tên..." oninput="_ongRender&&_ongRender()">'+
     '<label class="flex items-center gap-2 text-sm"><input type="checkbox" id="ongOnly" onchange="_ongRender&&_ongRender()" style="width:18px;height:18px;accent-color:var(--navy)"> Chỉ part đang về</label>'+
-    '<button class="btn btn-ghost" onclick="exportCSV(window._ongAll,\'ongoing.csv\')">⬇ CSV</button>'+
+    '<button class="btn btn-ghost" onclick="exportCSV(window._ongAll.map(function(r){return {part:r.part,name:r.name,on_hand:r.on_hand,incoming:r.incoming,total:r.total,eta_list:r.eta_list};}),\'ongoing.csv\')">⬇ CSV</button>'+
     '<span class="text-sm text-slate-500">(<span id="ongCount">0</span> dòng)</span></div>'+
-  '<div class="card overflow-auto"><table><thead><tr><th>Sản phẩm (Part)</th><th class="text-center">Tồn Fishbowl</th><th class="text-center">Đang về</th><th class="text-center">Tổng</th><th class="text-center">ETA gần nhất</th></tr></thead><tbody id="ongBodyT"></tbody></table></div>';
+  '<div class="card overflow-auto"><table><thead><tr><th>Sản phẩm (Part)</th><th class="text-center">Tồn Fishbowl</th><th class="text-center">Đang về</th><th class="text-center">Tổng</th><th>ETA (container)</th></tr></thead><tbody id="ongBodyT"></tbody></table></div>';
   window._ongRender=function(){
     var q=((document.getElementById('ongSearch')||{}).value||'').toLowerCase();
     var onlyInc=!!(document.getElementById('ongOnly')||{}).checked;
@@ -1757,7 +1757,7 @@ function renderOngoing(d){
         '<td class="text-center"><b style="color:var(--navy)">'+r.on_hand+'</b></td>'+
         '<td class="text-center"><b style="color:var(--green)">'+(r.incoming||0)+'</b></td>'+
         '<td class="text-center font-semibold">'+r.total+'</td>'+
-        '<td class="text-center text-slate-500">'+(r.eta||'-')+'</td></tr>';
+        '<td>'+((r.details&&r.details.length)? r.details.map(function(x){return '<span class="pill" style="background:var(--soft);color:var(--ink);margin:2px 2px;display:inline-block;white-space:nowrap">'+(x.cont||'')+' ('+(x.qty||0)+') ETA: '+(x.eta||'-')+'</span>';}).join(' ') : '<span class="text-slate-400">-</span>')+'</td></tr>';
     }).join('')||'<tr><td colspan="5" class="text-center text-slate-400 py-6">Chưa có dữ liệu — import ở Quản trị → Fishbowl/Ongoing</td></tr>';
     var c=document.getElementById('ongCount'); if(c) c.textContent=rows.length;
   };
@@ -2348,15 +2348,16 @@ function doImportInvOngoing(){
       if(!ws2) throw new Error('Không thấy sheet "3.ONGOING"');
       var a2=XLSX.utils.sheet_to_json(ws2,{header:1,raw:true});
       var h2=(a2[0]||[]).map(function(x){return String(x==null?'':x).trim();});
-      var iLink=h2.indexOf('Link Forecast'), iQ2=h2.indexOf('Qty'), iStatus=h2.indexOf('Status'), iWarr=h2.indexOf('Warehouse Arrival Date'), iEta=h2.indexOf('Eta');
+      var iLink=h2.indexOf('Link Forecast'), iQ2=h2.indexOf('Qty'), iStatus=h2.indexOf('Status'), iWarr=h2.indexOf('Warehouse Arrival Date'), iEta=h2.indexOf('Eta'), iCont=h2.indexOf('Cont');
       if(iLink<0||iStatus<0) throw new Error('Sheet "3.ONGOING" thiếu cột Link Forecast/Status');
       var ogMap={};
       for(var r2=1;r2<a2.length;r2++){ var rr=a2[r2]; if(!rr)continue; if(String(rr[iStatus]==null?'':rr[iStatus]).trim()!=='Entered')continue; var link=String(rr[iLink]==null?'':rr[iLink]).trim(); if(!link)continue;
-        var q2=parseFloat(rr[iQ2])||0; var d=_xdate(iWarr>=0?rr[iWarr]:null)||_xdate(iEta>=0?rr[iEta]:null);
-        if(!ogMap[link]) ogMap[link]={link_forecast:link,qty_incoming:0,next_eta:null,po_lines:0};
+        var q2=parseFloat(rr[iQ2])||0; var d=_xdate(iWarr>=0?rr[iWarr]:null)||_xdate(iEta>=0?rr[iEta]:null); var cont=String((iCont>=0?rr[iCont]:'')||'').trim();
+        if(!ogMap[link]) ogMap[link]={link_forecast:link,qty_incoming:0,next_eta:null,po_lines:0,details:[]};
         ogMap[link].qty_incoming+=q2; ogMap[link].po_lines+=1;
+        ogMap[link].details.push({cont:cont,qty:q2,eta:d||''});                 // lưu CHI TIẾT từng container
         if(d && (!ogMap[link].next_eta || d<ogMap[link].next_eta)) ogMap[link].next_eta=d; }
-      var og=Object.keys(ogMap).map(function(k){var o=ogMap[k];o.qty_incoming=Math.round(o.qty_incoming*1000)/1000;return o;});
+      var og=Object.keys(ogMap).map(function(k){var o=ogMap[k];o.qty_incoming=Math.round(o.qty_incoming*1000)/1000; o.details.sort(function(a,b){return String(a.eta||'9999').localeCompare(String(b.eta||'9999'));}); return o;});
       msg.textContent='Đang lưu lên máy chủ ('+fb.length+' part tồn · '+og.length+' part đang về)…';
       api('importInvOngoing',{fishbowl:fb,ongoing:og}).then(function(res){ msg.style.color='var(--green)'; msg.textContent='✓ Đã import: '+res.fb+' part tồn Fishbowl · '+res.og+' part đang về'; }).catch(function(e){ msg.style.color='var(--red)'; msg.textContent=L(e.message); });
     }catch(e){ msg.style.color='var(--red)'; msg.textContent=String(e.message||e); }
