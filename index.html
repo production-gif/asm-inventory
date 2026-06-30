@@ -11,6 +11,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 
@@ -328,14 +329,15 @@ var CONFIG = { sessionKey:'as_wms_session', queueKey:'as_wms_offline_queue', cac
 var ROLES = {
   packer:  {label:'Đóng gói',  icon:'📦', home:'inbound',   nav:['inbound']},
   picker:  {label:'Thủ kho',   icon:'🚚', home:'outbound',  nav:['outbound','inventory']},
-  manager: {label:'Quản lý',   icon:'📊', home:'dashboard', nav:['dashboard','inventory','products','orders','report','admin']},
-  admin:   {label:'Admin',     icon:'⚙️', home:'dashboard', nav:['dashboard','inbound','outbound','inventory','products','orders','report','admin']}
+  manager: {label:'Quản lý',   icon:'📊', home:'dashboard', nav:['dashboard','inventory','ongoing','products','orders','report','admin']},
+  admin:   {label:'Admin',     icon:'⚙️', home:'dashboard', nav:['dashboard','inbound','outbound','inventory','ongoing','products','orders','report','admin']}
 };
 // nhóm menu sidebar + tiêu đề trang
 var NAV = {
   inbound:{label:'Đóng gói',icon:'📦',group:'VẬN HÀNH',sub:'Quét nhập kho & in tem QR'},
   outbound:{label:'Xuất hàng',icon:'🚚',group:'VẬN HÀNH',sub:'Loading & quét xuất theo SO'},
   inventory:{label:'Tồn kho',icon:'📋',group:'KHO',sub:'Tồn theo SKU'},
+  ongoing:{label:'Ongoing',icon:'🚛',group:'KHO',sub:'Tồn Fishbowl & hàng đang về'},
   products:{label:'Sản phẩm',icon:'📦',group:'KHO',sub:'Danh mục sản phẩm'},
   orders:{label:'Đơn hàng',icon:'🧾',group:'KHO',sub:'Xem chi tiết Sales Order (mọi cột)'},
   dashboard:{label:'Tổng quan',icon:'📊',group:'BÁO CÁO',sub:'KPI & xu hướng'},
@@ -798,6 +800,21 @@ async function api(action, p){
       await audit(session.username,'create_order','SO='+so+' lines='+soL2.length+' newsku='+newSkC.length);
       return {so_number:so, lines:soL2.length, new_sku:newSkC.length};
     }
+    case 'importInvOngoing': {
+      if(!isAdmin()) throw new Error('Chỉ Admin được import dữ liệu này');
+      var fb=p.fishbowl||[], og=p.ongoing||[];
+      chk(await sb.from('fishbowl_inventory').delete().neq('part_number','___none___'));
+      chk(await sb.from('ongoing_incoming').delete().neq('link_forecast','___none___'));
+      for(var fi=0;fi<fb.length;fi+=400){ chk(await sb.from('fishbowl_inventory').insert(fb.slice(fi,fi+400))); }
+      for(var oi=0;oi<og.length;oi+=400){ chk(await sb.from('ongoing_incoming').insert(og.slice(oi,oi+400))); }
+      await audit(session.username,'import_inv_ongoing','fb='+fb.length+' og='+og.length);
+      return {fb:fb.length, og:og.length};
+    }
+    case 'getInvOngoing': {
+      var fbR=await pageAll(function(a,b){return sb.from('fishbowl_inventory').select('*').range(a,b);});
+      var ogR=await pageAll(function(a,b){return sb.from('ongoing_incoming').select('*').range(a,b);});
+      return { fishbowl:fbR, ongoing:ogR };
+    }
     case 'getOrders': {
       var rows=await pageAll(function(a,b){return sb.from('sales_orders').select('so_number,customer,status,state,sales_person,so_class,location_group,so_date,delivery_date,total_amount').order('so_number',{ascending:false}).range(a,b);});
       return {items:rows};
@@ -878,6 +895,13 @@ async function api(action, p){
  * ==================================================================== */
 var LANG = localStorage.getItem('as_lang') || 'en';
 var I18N_PAIRS = [
+  ['Ongoing','Ongoing'],['Tồn Fishbowl & hàng đang về','Fishbowl stock & incoming'],
+  ['Ongoing — Tồn Fishbowl & Hàng đang về','Ongoing — Fishbowl stock & Incoming'],
+  ['Tổng tồn Fishbowl','Total Fishbowl stock'],['Tổng đang về','Total incoming'],['Part đang về','Parts incoming'],
+  ['Chỉ part đang về','Only incoming parts'],['Tồn Fishbowl','Fishbowl stock'],['Đang về','Incoming'],
+  ['ETA gần nhất','Nearest ETA'],['Sản phẩm (Part)','Product (Part)'],['Tìm part / tên...','Search part / name...'],
+  ['Fishbowl/Ongoing','Fishbowl/Ongoing'],['Import Fishbowl + Ongoing','Import Fishbowl + Ongoing'],
+  ['Chưa có dữ liệu — import ở Quản trị → Fishbowl/Ongoing','No data — import at Admin → Fishbowl/Ongoing'],
   /* Đăng nhập / cấu hình */
   ['Hệ thống quản lý kho thông minh — quét QR, kiểm soát xuất / nhập / tồn theo thời gian thực.','Smart warehouse management — scan QR, control in/out/stock in real time.'],
   ['Quét QR nhập – xuất ngay trên điện thoại','Scan QR for inbound/outbound on your phone'],
@@ -1233,7 +1257,7 @@ function go(view){
   document.getElementById('pageTitle').textContent=NAV[view].label;
   document.getElementById('pageSub').textContent=NAV[view].sub;
   var m=document.getElementById('main'); m.innerHTML='<div class="text-center text-slate-400 py-12">Đang tải…</div>';
-  ({inbound:viewInbound,outbound:viewOutbound,inventory:viewInventory,products:viewProducts,orders:viewOrders,dashboard:viewDashboard,report:viewReport,admin:viewAdmin}[view]||viewInbound)(m);
+  ({inbound:viewInbound,outbound:viewOutbound,inventory:viewInventory,ongoing:viewOngoing,products:viewProducts,orders:viewOrders,dashboard:viewDashboard,report:viewReport,admin:viewAdmin}[view]||viewInbound)(m);
 }
 
 /* ====================================================================
@@ -1699,6 +1723,46 @@ async function setStockManual(sku,v){
  * 4a. SẢN PHẨM — danh mục (catalog)
  * ==================================================================== */
 var _prRows=[];
+/* ===== ONGOING — Tồn Fishbowl & Hàng đang về (độc lập, từ 2 sheet import) ===== */
+function viewOngoing(m){
+  m.innerHTML='<div class="sectiontitle mb-3">Ongoing — Tồn Fishbowl & Hàng đang về</div><div id="ongWrap"><div class="text-center text-slate-400 py-10">Đang tải…</div></div>';
+  api('getInvOngoing').then(function(d){ if(currentView==='ongoing') renderOngoing(d); })
+    .catch(function(e){ var w=document.getElementById('ongWrap'); if(w) w.innerHTML='<div class="card p-4">'+L(e.message)+'</div>'; });
+}
+function renderOngoing(d){
+  var fb=d.fishbowl||[], og=d.ongoing||[];
+  var fbMap={}; fb.forEach(function(r){ fbMap[r.part_number]={on:+r.qty_on_hand||0,uom:r.uom,desc:r.description}; });
+  var ogMap={}; og.forEach(function(r){ ogMap[r.link_forecast]={inc:+r.qty_incoming||0,eta:r.next_eta,lines:r.po_lines}; });
+  var skuMap={}; (cache.skus||[]).forEach(function(s){skuMap[s.sku_code]=s;});
+  var keys={}; Object.keys(fbMap).forEach(function(k){keys[k]=1;}); Object.keys(ogMap).forEach(function(k){keys[k]=1;});
+  window._ongAll=Object.keys(keys).map(function(k){ var f=fbMap[k]||{}, o=ogMap[k]||{}, s=skuMap[k]||{};
+    return {part:k, name:(s.product_name||f.desc||k), on_hand:f.on||0, incoming:o.inc||0, eta:o.eta||'', lines:o.lines||0, total:(f.on||0)+(o.inc||0)}; });
+  var totOn=window._ongAll.reduce(function(a,r){return a+r.on_hand;},0);
+  var totInc=window._ongAll.reduce(function(a,r){return a+r.incoming;},0);
+  var nInc=window._ongAll.filter(function(r){return r.incoming>0;}).length;
+  document.getElementById('ongWrap').innerHTML=
+  '<div class="grid grid-cols-3 gap-3 mb-4">'+kpi('Tổng tồn Fishbowl',Math.round(totOn),'var(--navy)','📦')+kpi('Tổng đang về',Math.round(totInc),'var(--green)','🚛')+kpi('Part đang về',nInc,'var(--amber)','⏳')+'</div>'+
+  '<div class="flex flex-wrap gap-2 mb-3 items-center"><input id="ongSearch" class="field" style="flex:1;min-width:180px" placeholder="🔍 Tìm part / tên..." oninput="_ongRender&&_ongRender()">'+
+    '<label class="flex items-center gap-2 text-sm"><input type="checkbox" id="ongOnly" onchange="_ongRender&&_ongRender()" style="width:18px;height:18px;accent-color:var(--navy)"> Chỉ part đang về</label>'+
+    '<button class="btn btn-ghost" onclick="exportCSV(window._ongAll,\'ongoing.csv\')">⬇ CSV</button>'+
+    '<span class="text-sm text-slate-500">(<span id="ongCount">0</span> dòng)</span></div>'+
+  '<div class="card overflow-auto"><table><thead><tr><th>Sản phẩm (Part)</th><th class="text-center">Tồn Fishbowl</th><th class="text-center">Đang về</th><th class="text-center">Tổng</th><th class="text-center">ETA gần nhất</th></tr></thead><tbody id="ongBodyT"></tbody></table></div>';
+  window._ongRender=function(){
+    var q=((document.getElementById('ongSearch')||{}).value||'').toLowerCase();
+    var onlyInc=!!(document.getElementById('ongOnly')||{}).checked;
+    var rows=(window._ongAll||[]).filter(function(r){ if(onlyInc && r.incoming<=0) return false; return (r.part+' '+r.name).toLowerCase().indexOf(q)>=0; });
+    rows.sort(function(a,b){ return (b.incoming-a.incoming) || (b.on_hand-a.on_hand); });
+    document.getElementById('ongBodyT').innerHTML=rows.slice(0,2000).map(function(r){
+      return '<tr><td>'+r.name+'<div class="text-xs text-slate-400">'+r.part+'</div></td>'+
+        '<td class="text-center"><b style="color:var(--navy)">'+r.on_hand+'</b></td>'+
+        '<td class="text-center"><b style="color:var(--green)">'+(r.incoming||0)+'</b></td>'+
+        '<td class="text-center font-semibold">'+r.total+'</td>'+
+        '<td class="text-center text-slate-500">'+(r.eta||'-')+'</td></tr>';
+    }).join('')||'<tr><td colspan="5" class="text-center text-slate-400 py-6">Chưa có dữ liệu — import ở Quản trị → Fishbowl/Ongoing</td></tr>';
+    var c=document.getElementById('ongCount'); if(c) c.textContent=rows.length;
+  };
+  window._ongRender();
+}
 function viewProducts(m){
   function render(){
     var q=((document.getElementById('prSearch')||{}).value||'').toLowerCase();
@@ -2244,11 +2308,61 @@ async function loadSalesKPI(){
  * ==================================================================== */
 function viewAdmin(m){
   m.innerHTML='<div class="flex gap-1.5 mb-4 flex-wrap">'+
-    ['SKU','Import SKU','Xe','User','Import SO','Cài đặt','Nhật ký'].map(function(t,i){return '<button class="btn '+(i===0?'btn-navy':'btn-ghost')+'" id="adt'+i+'" onclick="adminTab('+i+')">'+t+'</button>';}).join('')+
+    ['SKU','Import SKU','Xe','User','Import SO','Fishbowl/Ongoing','Cài đặt','Nhật ký'].map(function(t,i){return '<button class="btn '+(i===0?'btn-navy':'btn-ghost')+'" id="adt'+i+'" onclick="adminTab('+i+')">'+t+'</button>';}).join('')+
     '</div><div id="adminBody"></div>';
   adminTab(0);
 }
-function adminTab(i){ [0,1,2,3,4,5,6].forEach(function(x){var b=document.getElementById('adt'+x); if(b)b.className='btn '+(x===i?'btn-navy':'btn-ghost');}); ([adminSKU,adminImportSKU,adminVehicle,adminUser,adminImport,adminSettings,adminAudit][i])(); }
+function adminTab(i){ [0,1,2,3,4,5,6,7].forEach(function(x){var b=document.getElementById('adt'+x); if(b)b.className='btn '+(x===i?'btn-navy':'btn-ghost');}); ([adminSKU,adminImportSKU,adminVehicle,adminUser,adminImport,adminInvOngoing,adminSettings,adminAudit][i])(); }
+function adminInvOngoing(){
+  document.getElementById('adminBody').innerHTML=
+  '<div class="card p-5"><div class="font-semibold mb-1 text-slate-700">Import Fishbowl (tồn kho) + Ongoing (hàng đang về) — file Excel</div>'+
+    '<p class="text-sm text-slate-500 mb-3">Chọn file <b>.xlsx</b> (ASM ORDER FORECAST). App chỉ lấy 2 sheet: <b>Inv input</b> (tồn Fishbowl, cộng Qty mọi Location theo Part) và <b>3.ONGOING</b> (chỉ dòng <b>Status = Entered</b>, gom theo Link Forecast). Mỗi lần import THAY TOÀN BỘ dữ liệu cũ.</p>'+
+    '<input type="file" id="invOngFile" accept=".xlsx,.xls" class="field mb-2" style="padding-top:12px">'+
+    '<button class="btn btn-navy w-full" onclick="doImportInvOngoing()">Import Fishbowl + Ongoing</button>'+
+    '<div id="ioMsg" class="text-center text-sm mt-2"></div></div>';
+}
+function _xdate(v){ if(v instanceof Date && !isNaN(v.getTime())) return v.getFullYear()+'-'+pad(v.getMonth()+1)+'-'+pad(v.getDate()); return dateOrNull(String(v==null?'':v)); }
+function doImportInvOngoing(){
+  var f=document.getElementById('invOngFile').files[0]; if(!f){alert(L('Chọn file Excel'));return;}
+  if(!window.XLSX){alert('Thư viện đọc Excel chưa tải xong — thử lại sau vài giây');return;}
+  var msg=document.getElementById('ioMsg'); msg.style.color='var(--navy)'; msg.textContent='Đang đọc file Excel…';
+  var rd=new FileReader();
+  rd.onload=function(){
+    try{
+      var wb=XLSX.read(new Uint8Array(rd.result),{type:'array',cellDates:true});
+      function findSheet(test){ var n=Object.keys(wb.Sheets).filter(test)[0]; return n?wb.Sheets[n]:null; }
+      // ----- Inv input (tồn Fishbowl) -----
+      var ws1=wb.Sheets['Inv input']||findSheet(function(n){return n.toLowerCase().replace(/\s/g,'')==='invinput';});
+      if(!ws1) throw new Error('Không thấy sheet "Inv input"');
+      var a1=XLSX.utils.sheet_to_json(ws1,{header:1,raw:true});
+      var h1=(a1[0]||[]).map(function(x){return String(x==null?'':x).trim();});
+      var iPart=h1.indexOf('PartNumber'), iDesc=h1.indexOf('PartDescription'), iQty=h1.indexOf('Qty'), iUom=h1.indexOf('UOM');
+      if(iPart<0||iQty<0) throw new Error('Sheet "Inv input" thiếu cột PartNumber/Qty');
+      var fbMap={};
+      for(var r=1;r<a1.length;r++){ var row=a1[r]; if(!row)continue; var part=String(row[iPart]==null?'':row[iPart]).trim(); if(!part)continue; var q=parseFloat(row[iQty])||0;
+        if(!fbMap[part]) fbMap[part]={part_number:part,description:String((iDesc>=0?row[iDesc]:'')||'').trim(),qty_on_hand:0,uom:String((iUom>=0?row[iUom]:'ea')||'ea').trim()};
+        fbMap[part].qty_on_hand+=q; }
+      var fb=Object.keys(fbMap).map(function(k){var o=fbMap[k];o.qty_on_hand=Math.round(o.qty_on_hand*1000)/1000;return o;});
+      // ----- 3.ONGOING (hàng đang về, Status=Entered) -----
+      var ws2=wb.Sheets['3.ONGOING']||findSheet(function(n){return n.toLowerCase().replace(/[\s.]/g,'').indexOf('ongoing')>=0;});
+      if(!ws2) throw new Error('Không thấy sheet "3.ONGOING"');
+      var a2=XLSX.utils.sheet_to_json(ws2,{header:1,raw:true});
+      var h2=(a2[0]||[]).map(function(x){return String(x==null?'':x).trim();});
+      var iLink=h2.indexOf('Link Forecast'), iQ2=h2.indexOf('Qty'), iStatus=h2.indexOf('Status'), iWarr=h2.indexOf('Warehouse Arrival Date'), iEta=h2.indexOf('Eta');
+      if(iLink<0||iStatus<0) throw new Error('Sheet "3.ONGOING" thiếu cột Link Forecast/Status');
+      var ogMap={};
+      for(var r2=1;r2<a2.length;r2++){ var rr=a2[r2]; if(!rr)continue; if(String(rr[iStatus]==null?'':rr[iStatus]).trim()!=='Entered')continue; var link=String(rr[iLink]==null?'':rr[iLink]).trim(); if(!link)continue;
+        var q2=parseFloat(rr[iQ2])||0; var d=_xdate(iWarr>=0?rr[iWarr]:null)||_xdate(iEta>=0?rr[iEta]:null);
+        if(!ogMap[link]) ogMap[link]={link_forecast:link,qty_incoming:0,next_eta:null,po_lines:0};
+        ogMap[link].qty_incoming+=q2; ogMap[link].po_lines+=1;
+        if(d && (!ogMap[link].next_eta || d<ogMap[link].next_eta)) ogMap[link].next_eta=d; }
+      var og=Object.keys(ogMap).map(function(k){var o=ogMap[k];o.qty_incoming=Math.round(o.qty_incoming*1000)/1000;return o;});
+      msg.textContent='Đang lưu lên máy chủ ('+fb.length+' part tồn · '+og.length+' part đang về)…';
+      api('importInvOngoing',{fishbowl:fb,ongoing:og}).then(function(res){ msg.style.color='var(--green)'; msg.textContent='✓ Đã import: '+res.fb+' part tồn Fishbowl · '+res.og+' part đang về'; }).catch(function(e){ msg.style.color='var(--red)'; msg.textContent=L(e.message); });
+    }catch(e){ msg.style.color='var(--red)'; msg.textContent=String(e.message||e); }
+  };
+  rd.readAsArrayBuffer(f);
+}
 async function adminAudit(){
   var b=document.getElementById('adminBody'); b.innerHTML='<div class="text-center text-slate-400 py-6">Đang tải…</div>';
   try{ var rows=(await api('getAuditLog')).items||[];
