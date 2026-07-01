@@ -2346,7 +2346,7 @@ function adminTab(i){ [0,1,2,3,4,5,6,7].forEach(function(x){var b=document.getEl
 function adminInvOngoing(){
   document.getElementById('adminBody').innerHTML=
   '<div class="card p-5"><div class="font-semibold mb-1 text-slate-700">Import Fishbowl (tồn kho) + Ongoing (hàng đang về) — file Excel</div>'+
-    '<p class="text-sm text-slate-500 mb-3">Chọn file <b>.xlsx</b> (ASM ORDER FORECAST). App chỉ lấy 2 sheet: <b>Inv input</b> (tồn Fishbowl, cộng Qty mọi Location theo Part) và <b>3.ONGOING</b> (chỉ dòng <b>Status = Entered</b>, gom theo Link Forecast). Mỗi lần import THAY TOÀN BỘ dữ liệu cũ.</p>'+
+    '<p class="text-sm text-slate-500 mb-3">Chọn file <b>.xlsx</b> (ASM ORDER FORECAST). App chỉ lấy 2 sheet: <b>Inv input</b> (tồn Fishbowl, cộng Qty mọi Location theo Part) và <b>3.ONGOING</b> (chỉ dòng <b>Status = Entered</b>, gom theo <b>Number (part)</b> — không bỏ sót dòng không có Link Forecast). Mỗi lần import THAY TOÀN BỘ dữ liệu cũ.</p>'+
     '<input type="file" id="invOngFile" accept=".xlsx,.xls" class="field mb-2" style="padding-top:12px">'+
     '<button class="btn btn-navy w-full" onclick="doImportInvOngoing()">Import Fishbowl + Ongoing</button>'+
     '<div id="ioMsg" class="text-center text-sm mt-2"></div></div>';
@@ -2378,15 +2378,16 @@ function doImportInvOngoing(){
       if(!ws2) throw new Error('Không thấy sheet "3.ONGOING"');
       var a2=XLSX.utils.sheet_to_json(ws2,{header:1,raw:true});
       var h2=(a2[0]||[]).map(function(x){return String(x==null?'':x).trim();});
-      var iLink=h2.indexOf('Link Forecast'), iQ2=h2.indexOf('Qty'), iStatus=h2.indexOf('Status'), iWarr=h2.indexOf('Warehouse Arrival Date'), iEta=h2.indexOf('Eta'), iCont=h2.indexOf('Cont');
-      if(iLink<0||iStatus<0) throw new Error('Sheet "3.ONGOING" thiếu cột Link Forecast/Status');
+      // Gom theo cột NUMBER (part number) -> không bỏ sót dòng không có Link Forecast; nối với Fishbowl theo part.
+      var iNum=h2.indexOf('Number'), iQ2=h2.indexOf('Qty'), iStatus=h2.indexOf('Status'), iWarr=h2.indexOf('Warehouse Arrival Date'), iEta=h2.indexOf('Eta'), iCont=h2.indexOf('Cont');
+      if(iNum<0||iStatus<0) throw new Error('Sheet "3.ONGOING" thiếu cột Number/Status');
       var ogMap={};
-      for(var r2=1;r2<a2.length;r2++){ var rr=a2[r2]; if(!rr)continue; if(String(rr[iStatus]==null?'':rr[iStatus]).trim()!=='Entered')continue; var link=String(rr[iLink]==null?'':rr[iLink]).trim(); if(!link)continue;
+      for(var r2=1;r2<a2.length;r2++){ var rr=a2[r2]; if(!rr)continue; if(String(rr[iStatus]==null?'':rr[iStatus]).trim()!=='Entered')continue; var key=String(rr[iNum]==null?'':rr[iNum]).trim(); if(!key)continue;
         var q2=parseFloat(rr[iQ2])||0; var d=_xdate(iWarr>=0?rr[iWarr]:null)||_xdate(iEta>=0?rr[iEta]:null); var cont=String((iCont>=0?rr[iCont]:'')||'').trim();
-        if(!ogMap[link]) ogMap[link]={link_forecast:link,qty_incoming:0,next_eta:null,po_lines:0,details:[]};
-        ogMap[link].qty_incoming+=q2; ogMap[link].po_lines+=1;
-        ogMap[link].details.push({cont:cont,qty:q2,eta:d||''});                 // lưu CHI TIẾT từng container
-        if(d && (!ogMap[link].next_eta || d<ogMap[link].next_eta)) ogMap[link].next_eta=d; }
+        if(!ogMap[key]) ogMap[key]={link_forecast:key,qty_incoming:0,next_eta:null,po_lines:0,details:[]};
+        ogMap[key].qty_incoming+=q2; ogMap[key].po_lines+=1;
+        ogMap[key].details.push({cont:cont,qty:q2,eta:d||''});                 // lưu CHI TIẾT từng container
+        if(d && (!ogMap[key].next_eta || d<ogMap[key].next_eta)) ogMap[key].next_eta=d; }
       var og=Object.keys(ogMap).map(function(k){var o=ogMap[k];o.qty_incoming=Math.round(o.qty_incoming*1000)/1000; o.details.sort(function(a,b){return String(a.eta||'9999').localeCompare(String(b.eta||'9999'));}); return o;});
       msg.textContent='Đang lưu lên máy chủ ('+fb.length+' part tồn · '+og.length+' part đang về)…';
       api('importInvOngoing',{fishbowl:fb,ongoing:og}).then(function(res){ msg.style.color='var(--green)'; msg.textContent='✓ Đã import: '+res.fb+' part tồn Fishbowl · '+res.og+' part đang về'; }).catch(function(e){ msg.style.color='var(--red)'; msg.textContent=L(e.message); });
